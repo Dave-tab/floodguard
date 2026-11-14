@@ -1,1 +1,44 @@
 @import "tailwindcss";
+
+
+@theme {
+  /* FloodGuard brand */
+  --color-brand-950: #102A43;
+  --color-brand-900: #163A56;
+  --color-brand-800: #1E526F;
+  --color-brand-700: #0F766E;
+  --color-brand-600: #0D9488;
+  --color-brand-500: #14B8A6;
+  --color-brand-100: #CCFBF1;
+  --color-brand-50: #DDF7F3;
+
+  /* Interface surfaces */
+  --color-canvas: #F4F8FA;
+  --color-surface: #FFFFFF;
+  --color-surface-muted: #EDF4F6;
+  --color-border-soft: #DCE7EC;
+
+  /* Text */
+  --color-text-primary: #102A43;
+  --color-text-secondary: #64748B;
+
+  /* Risk indicators */
+  --color-risk-low: #16A34A;
+  --color-risk-moderate: #F59E0B;
+  --color-risk-high: #EA580C;
+  --color-risk-critical: #DC2626;
+}
+
+:root {
+  color-scheme: light;
+  --fg-brand: #102A43;
+  --fg-accent: #0D9488;
+  --fg-background: #F4F8FA;
+  --fg-surface: #FFFFFF;
+  --fg-border: #DCE7EC;
+}
+
+body {
+  background: var(--fg-background);
+  color: var(--fg-brand);
+}

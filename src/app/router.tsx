@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { CommunityOverviewPage } from '../features/community/CommunityOverviewPage';
 import { ExplorePage } from '../features/resident/ExplorePage';
 import { ModulePlaceholderPage } from '../features/resident/ModulePlaceholderPage';
+import { HazardMapPage } from '../features/resident/HazardMapPage';
 
 export function AppRouter() {
   return (
@@ -18,17 +19,7 @@ export function AppRouter() {
         />
 
         {/* FE2: Hazard map */}
-        <Route
-          path="/hazard-map"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Hazard Map"
-              title="Interactive Verified Hazard Map"
-              description="The interactive hazard map and verified incident filtering workflow will be available here."
-              ownerLabel="FE2 Integration Point"
-            />
-          }
-        />
+        <Route path="/hazard-map" element={<HazardMapPage />} />
 
         {/* FE2: Hazard reporting */}
         <Route

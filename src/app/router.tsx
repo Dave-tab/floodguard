@@ -3,14 +3,17 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { CommunityOverviewPage } from '../features/community/CommunityOverviewPage';
 import { ExplorePage } from '../features/resident/ExplorePage';
-import { ModulePlaceholderPage } from '../features/resident/ModulePlaceholderPage';
 import { HazardMapPage } from '../features/resident/HazardMapPage';
+import { ReportHazardPage } from '../features/resident/ReportHazardPage';
+import { AuthPage } from '../features/auth/AuthPage';
+import { AlertsPage } from '../features/resident/AlertsPage';
+import { MyActivityPage } from '../features/resident/MyActivityPage';
 
 export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* FE1: Public resident experience */}
+        {/* Public resident experience */}
         <Route path="/" element={<ExplorePage />} />
 
         <Route
@@ -18,46 +21,32 @@ export function AppRouter() {
           element={<CommunityOverviewPage />}
         />
 
-        {/* FE2: Hazard map */}
         <Route path="/hazard-map" element={<HazardMapPage />} />
 
-        {/* FE2: Hazard reporting */}
+        {/* Authentication */}
+        <Route
+          path="/login"
+          element={<AuthPage initialMode="login" />}
+        />
+
+        <Route
+          path="/register"
+          element={<AuthPage initialMode="register" />}
+        />
+
+        {/* Temporary public access for frontend development */}
         <Route
           path="/report-hazard"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Report Hazard"
-              title="Resident Hazard Reporting"
-              description="This area is reserved for authenticated residents to submit hazard reports for administrative review."
-              ownerLabel="FE2 Integration Point"
-            />
-          }
+          element={<ReportHazardPage />}
         />
 
-        {/* Team integration: Alerts */}
-        <Route
-          path="/alerts"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Alerts"
-              title="Community Alerts and Notices"
-              description="This area is reserved for weather information and authorised community notices."
-              ownerLabel="Team Integration Point"
-            />
-          }
-        />
+        {/* Public alerts */}
+        <Route path="/alerts" element={<AlertsPage />} />
 
-        {/* Team integration: Resident activity */}
+        {/* Temporary public access to preview My Activity */}
         <Route
           path="/my-activity"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Activity"
-              title="Resident Activity"
-              description="This area is reserved for authenticated resident account access and private report tracking."
-              ownerLabel="Team Integration Point"
-            />
-          }
+          element={<MyActivityPage />}
         />
 
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,9 +1,14 @@
-import type { ReactNode } from "react";
 
+import type { ReactNode } from 'react';
+import { AuthProvider } from '../features/auth/auth-context';
 interface ProvidersProps {
   children: ReactNode;
 }
 
 export function Providers({ children }: ProvidersProps) {
-  return <>{children}</>;
+  return (
+    <AuthProvider>
+      {children}
+    </AuthProvider>
+  );
 }

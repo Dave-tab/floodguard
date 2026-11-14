@@ -68,7 +68,11 @@ async function getJson<T>(url: string, f: typeof fetch): Promise<T> {
 }
 
 /** Open-Meteo returns "2026-11-14T15:00" in UTC when timezone=UTC; normalise to full ISO. */
-export const toIso = (t: string) => (/[zZ]|[+-]\d\d:\d\d$/.test(t) ? t : `${t.length === 10 ? `${t}T00:00` : t}:00Z`);
+export function toIso(t: string): string {
+  if (/(?:[zZ]|[+-]\d\d:\d\d)$/.test(t)) return t; // already carries a timezone
+  const withTime = t.length === 10 ? t + "T00:00" : t; // date-only -> midnight
+  return withTime + ":00Z";
+}
 const withKey = (u: URL, key?: string) => {
   if (key) u.searchParams.set("apikey", key);
   return u;

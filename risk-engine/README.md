@@ -70,7 +70,7 @@ the frontend type needs `severe` added (and `moderate` retired).
 
 ```bash
 npm install
-npm test               # 49 tests
+npm test               # 53 tests
 npm run typecheck
 npm run assess:demo    # live assessment of the pilot areas
 npm run explain:live   # live AI explanation test (needs VULTR_INFERENCE_API_KEY in .env)

@@ -4,53 +4,43 @@ import type { FormEvent } from 'react';
 import {
   supabase,
   type AlertPayload,
-  type AlertSeverity,
+  type AssessmentRiskLevel,
   type CommunityPayload,
 } from '../../services/supabaseClient';
+import {
+  AdminAlert,
+  AdminLoadingState,
+  AdminSectionHeader,
+  AdminSeverityBadge,
+  AdminStatusOutput,
+} from './AdminShared';
+import {
+  formatAdminDate,
+  getAdminErrorMessage,
+} from './adminUtils';
 
 interface RecentBroadcast extends AlertPayload {
   community_name: string;
 }
 
-const SEVERITIES: AlertSeverity[] = [
+const SEVERITIES: AssessmentRiskLevel[] = [
   'LOW',
   'MODERATE',
   'HIGH',
   'CRITICAL',
 ];
 
-const SEVERITY_STYLES: Record<AlertSeverity, string> = {
-  LOW: 'border-emerald-300 bg-emerald-50 text-emerald-900',
-  MODERATE: 'border-amber-300 bg-amber-50 text-amber-900',
-  HIGH: 'border-orange-300 bg-orange-50 text-orange-900',
-  CRITICAL: 'border-red-300 bg-red-50 text-red-900',
+const BROADCAST_STATUS_STYLES = {
+  Active: 'bg-emerald-100 text-emerald-900',
+  Expired: 'bg-slate-100 text-slate-700',
 };
-
-function formatDate(value: string | null): string {
-  if (!value) return 'No expiry set';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Date unavailable';
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : 'An unexpected error occurred. Please try again.';
-}
 
 function getBroadcastStatus(expiresAt: string | null): 'Active' | 'Expired' {
   if (!expiresAt) return 'Active';
 
   const expiryTime = new Date(expiresAt).getTime();
-  return Number.isFinite(expiryTime) && expiryTime > Date.now()
-    ? 'Active'
-    : 'Expired';
+  if (Number.isFinite(expiryTime) && expiryTime > Date.now()) return 'Active';
+  return 'Expired';
 }
 
 function toLocalDateTimeValue(date: Date): string {
@@ -60,13 +50,79 @@ function toLocalDateTimeValue(date: Date): string {
   return localDate.toISOString().slice(0, 16);
 }
 
+function BroadcastHistory({
+  broadcasts,
+  hasError,
+}: Readonly<{
+  broadcasts: RecentBroadcast[];
+  hasError: boolean;
+}>) {
+  if (!hasError && broadcasts.length === 0) {
+    return (
+      <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600">
+        No administrator broadcasts are available.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="mt-5 divide-y divide-slate-200">
+      {broadcasts.map((broadcast) => {
+        const status = getBroadcastStatus(broadcast.expires_at);
+
+        return (
+          <li className="py-4 first:pt-0 last:pb-0" key={broadcast.id}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 className="font-semibold text-slate-900">
+                  {broadcast.title}
+                </h4>
+                <p className="mt-1 text-sm text-slate-600">
+                  {broadcast.community_name}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <AdminSeverityBadge severity={broadcast.severity} />
+                <span
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${BROADCAST_STATUS_STYLES[status]}`}
+                >
+                  {status}
+                </span>
+              </div>
+            </div>
+            <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+              {broadcast.message}
+            </p>
+            <dl className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
+              <div>
+                <dt className="inline font-medium">Issued: </dt>
+                <dd className="inline">
+                  {formatAdminDate(broadcast.issued_at)}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-medium">Expires: </dt>
+                <dd className="inline">
+                  {broadcast.expires_at === null
+                    ? 'No expiry set'
+                    : formatAdminDate(broadcast.expires_at)}
+                </dd>
+              </div>
+            </dl>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function EmergencyBroadcastForm() {
   const [communities, setCommunities] = useState<CommunityPayload[]>([]);
   const [broadcasts, setBroadcasts] = useState<RecentBroadcast[]>([]);
   const [communityId, setCommunityId] = useState('all');
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
-  const [severity, setSeverity] = useState<AlertSeverity | ''>('');
+  const [severity, setSeverity] = useState<AssessmentRiskLevel | ''>('');
   const [expiresAt, setExpiresAt] = useState('');
   const [isLoadingCommunities, setIsLoadingCommunities] = useState(true);
   const [isLoadingBroadcasts, setIsLoadingBroadcasts] = useState(true);
@@ -98,8 +154,8 @@ export default function EmergencyBroadcastForm() {
       }
 
       setCommunities(result.data ?? []);
-    } catch (caught: unknown) {
-      setCommunityError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setCommunityError(getAdminErrorMessage(error));
       setCommunities([]);
     } finally {
       setIsLoadingCommunities(false);
@@ -175,8 +231,8 @@ export default function EmergencyBroadcastForm() {
             : 'All communities',
         })),
       );
-    } catch (caught: unknown) {
-      setBroadcastError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setBroadcastError(getAdminErrorMessage(error));
       setBroadcasts([]);
     } finally {
       setIsLoadingBroadcasts(false);
@@ -274,8 +330,8 @@ export default function EmergencyBroadcastForm() {
       setExpiresAt('');
       setSuccessMessage('Emergency broadcast sent successfully.');
       await loadBroadcasts();
-    } catch (caught: unknown) {
-      setSubmitError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setSubmitError(getAdminErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -283,21 +339,20 @@ export default function EmergencyBroadcastForm() {
 
   const minimumExpiry = toLocalDateTimeValue(new Date());
 
+  const previewMessage = supabase
+    ? 'No administrator broadcasts are available.'
+    : 'Preview mode: administrator broadcast history will appear here after backend integration.';
+
   return (
     <section className="space-y-6">
-      <header>
-        <p className="text-sm font-semibold uppercase tracking-wide text-red-700">
-          Admin communications
-        </p>
-        <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-          Emergency broadcast
-        </h2>
-        <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600">
-  {!supabase
-    ? 'Preview mode: administrator broadcast history will appear here after backend integration.'
-    : 'No administrator broadcasts are available.'}
-</p>
-      </header>
+      <AdminSectionHeader
+        description={previewMessage}
+        descriptionClassName="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600"
+        eyebrow="Admin communications"
+        eyebrowClassName="text-sm font-semibold uppercase tracking-wide text-red-700"
+        title="Emergency broadcast"
+        titleClassName="mt-1 text-2xl font-bold tracking-tight text-slate-950"
+      />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">
         <form
@@ -314,34 +369,33 @@ export default function EmergencyBroadcastForm() {
           </div>
 
           {communityError && (
-            <p
+            <AdminAlert
+              as="p"
               className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"
-              role="alert"
             >
               {communityError}
-            </p>
+            </AdminAlert>
           )}
 
           {submitError && (
-            <p
+            <AdminAlert
+              as="p"
               className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"
-              role="alert"
             >
               {submitError}
-            </p>
+            </AdminAlert>
           )}
 
           {successMessage && (
-            <p
+            <AdminStatusOutput
               className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
-              role="status"
             >
               {successMessage}
-            </p>
+            </AdminStatusOutput>
           )}
 
           <label className="block text-sm font-medium text-slate-800">
-            Alert title
+            Alert title{' '}
             <input
               autoComplete="off"
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-950 placeholder:text-slate-400 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
@@ -354,7 +408,7 @@ export default function EmergencyBroadcastForm() {
           </label>
 
           <label className="block text-sm font-medium text-slate-800">
-            Message body
+            Message body{' '}
             <textarea
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-950 placeholder:text-slate-400 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               onChange={(event) => setMessage(event.target.value)}
@@ -366,7 +420,7 @@ export default function EmergencyBroadcastForm() {
           </label>
 
           <label className="block text-sm font-medium text-slate-800">
-            Affected community
+            Affected community{' '}
             <select
               className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               disabled={isLoadingCommunities}
@@ -386,11 +440,11 @@ export default function EmergencyBroadcastForm() {
           </label>
 
           <label className="block text-sm font-medium text-slate-800">
-            Alert severity
+            Alert severity{' '}
             <select
               className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               onChange={(event) =>
-                setSeverity(event.target.value as AlertSeverity | '')
+                setSeverity(event.target.value as AssessmentRiskLevel | '')
               }
               required
               value={severity}
@@ -407,7 +461,7 @@ export default function EmergencyBroadcastForm() {
           </label>
 
           <label className="block text-sm font-medium text-slate-800">
-            Expiry time
+            Expiry time{' '}
             <input
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-950 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               min={minimumExpiry}
@@ -456,10 +510,7 @@ export default function EmergencyBroadcastForm() {
           </div>
 
           {broadcastError && (
-            <div
-              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3"
-              role="alert"
-            >
+            <AdminAlert className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
               <p className="text-sm text-red-800">{broadcastError}</p>
               <button
                 className="mt-2 text-sm font-semibold text-red-900 underline"
@@ -468,74 +519,19 @@ export default function EmergencyBroadcastForm() {
               >
                 Retry
               </button>
-            </div>
+            </AdminAlert>
           )}
 
-          {isLoadingBroadcasts ? (
-            <p
-              className="mt-5 rounded-lg bg-slate-50 p-5 text-center text-sm text-slate-600"
-              role="status"
-            >
+          {isLoadingBroadcasts && (
+            <AdminLoadingState className="mt-5 rounded-lg bg-slate-50 p-5 text-center text-sm text-slate-600">
               Loading recent broadcasts…
-            </p>
-          ) : !broadcastError && broadcasts.length === 0 ? (
-            <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600">
-              No administrator broadcasts are available.
-            </p>
-          ) : (
-            <ul className="mt-5 divide-y divide-slate-200">
-              {broadcasts.map((broadcast) => {
-                const status = getBroadcastStatus(broadcast.expires_at);
-
-                return (
-                  <li className="py-4 first:pt-0 last:pb-0" key={broadcast.id}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h4 className="font-semibold text-slate-900">
-                          {broadcast.title}
-                        </h4>
-                        <p className="mt-1 text-sm text-slate-600">
-                          {broadcast.community_name}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <span
-                          className={`rounded-full border px-2.5 py-1 text-xs font-bold ${SEVERITY_STYLES[broadcast.severity]}`}
-                        >
-                          {broadcast.severity}
-                        </span>
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            status === 'Active'
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          {status}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
-                      {broadcast.message}
-                    </p>
-                    <dl className="mt-3 grid gap-2 text-xs text-slate-500 sm:grid-cols-2">
-                      <div>
-                        <dt className="inline font-medium">Issued: </dt>
-                        <dd className="inline">
-                          {formatDate(broadcast.issued_at)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="inline font-medium">Expires: </dt>
-                        <dd className="inline">
-                          {formatDate(broadcast.expires_at)}
-                        </dd>
-                      </div>
-                    </dl>
-                  </li>
-                );
-              })}
-            </ul>
+            </AdminLoadingState>
+          )}
+          {!isLoadingBroadcasts && (
+            <BroadcastHistory
+              broadcasts={broadcasts}
+              hasError={Boolean(broadcastError)}
+            />
           )}
         </section>
       </div>

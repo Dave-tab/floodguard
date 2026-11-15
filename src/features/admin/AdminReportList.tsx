@@ -7,6 +7,18 @@ import {
   type CommunityPayload,
   type HazardReportPayload,
 } from '../../services/supabaseClient';
+import {
+  AdminAlert,
+  AdminLoadingState,
+  AdminSectionHeader,
+  AdminStatusBadge,
+} from './AdminShared';
+import {
+  ADMIN_CATEGORY_LABELS,
+  ADMIN_STATUS_LABELS,
+  formatAdminDate,
+  getAdminErrorMessage,
+} from './adminUtils';
 
 interface AdminReport extends HazardReportPayload {
   community_name: string;
@@ -14,6 +26,7 @@ interface AdminReport extends HazardReportPayload {
 
 type StatusFilter = 'all' | AdminReportStatus;
 type CategoryFilter = 'all' | HazardCategory;
+type ActionableStatus = Extract<AdminReportStatus, 'verified' | 'rejected'>;
 
 const STATUS_OPTIONS: AdminReportStatus[] = [
   'pending',
@@ -21,62 +34,25 @@ const STATUS_OPTIONS: AdminReportStatus[] = [
   'rejected',
 ];
 
-const STATUS_LABELS: Record<AdminReportStatus, string> = {
-  pending: 'Pending',
-  verified: 'Verified',
-  rejected: 'Rejected',
-};
-
-const TRANSITION_ACTION_LABELS: Record<AdminReportStatus, string> = {
-  pending: 'Pending',
+const TRANSITION_ACTION_LABELS: Record<ActionableStatus, string> = {
   verified: 'Verify',
   rejected: 'Reject',
 };
 
-const STATUS_STYLES: Record<AdminReportStatus, string> = {
-  pending: 'bg-amber-50 text-amber-800 ring-amber-600/20',
-  verified: 'bg-brand-50 text-brand-800 ring-brand-100',
-  rejected: 'bg-red-50 text-red-800 ring-red-600/20',
-};
-
-const ALLOWED_TRANSITIONS: Record<
-  AdminReportStatus,
-  readonly AdminReportStatus[]
-> = {
+const ALLOWED_TRANSITIONS: Record<AdminReportStatus, readonly ActionableStatus[]> = {
   pending: ['verified', 'rejected'],
   verified: [],
   rejected: [],
+  in_progress: [],
+  resolved: [],
 };
 
-const CATEGORY_LABELS: Record<HazardCategory, string> = {
-  blocked_drainage: 'Blocked drainage',
-  damaged_drainage: 'Damaged drainage',
-  flooded_road: 'Flooded road',
-  other: 'Other',
-  overflowing_waterway: 'Overflowing waterway',
-  rising_water_level: 'Rising water level',
+const TRANSITION_BUTTON_STYLES: Record<ActionableStatus, string> = {
+  verified:
+    'rounded-xl bg-brand-600 px-3.5 py-2.5 text-xs font-bold text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-teal-300 focus:ring-offset-2',
+  rejected:
+    'rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2',
 };
-
-
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Date unavailable';
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : 'An unexpected error occurred. Please try again.';
-}
 
 function getSafeImageUrl(value: string | null): string | null {
   if (!value) return null;
@@ -86,19 +62,10 @@ function getSafeImageUrl(value: string | null): string | null {
     return url.protocol === 'https:' || url.protocol === 'http:'
       ? url.toString()
       : null;
-  } catch {
-    return null;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
   }
-}
-
-function StatusBadge({ status }: { status: AdminReportStatus }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${STATUS_STYLES[status]}`}
-    >
-      {STATUS_LABELS[status]}
-    </span>
-  );
 }
 
 export default function AdminReportList() {
@@ -177,8 +144,8 @@ export default function AdminReportList() {
             communityNames.get(report.community_id) ?? 'Community unavailable',
         })),
       );
-    } catch (caught: unknown) {
-      setError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setError(getAdminErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -215,7 +182,7 @@ export default function AdminReportList() {
 
   async function updateStatus(
     report: AdminReport,
-    nextStatus: AdminReportStatus,
+    nextStatus: ActionableStatus,
   ): Promise<void> {
     setActionError(null);
     setBusyReportId(report.id);
@@ -230,7 +197,7 @@ export default function AdminReportList() {
 
     if (!ALLOWED_TRANSITIONS[report.status].includes(nextStatus)) {
       setActionError(
-        `The transition from ${STATUS_LABELS[report.status]} to ${STATUS_LABELS[nextStatus]} is not allowed.`,
+        `The transition from ${ADMIN_STATUS_LABELS[report.status]} to ${ADMIN_STATUS_LABELS[nextStatus]} is not allowed.`,
       );
       setBusyReportId(null);
       return;
@@ -261,8 +228,8 @@ export default function AdminReportList() {
       }
 
       await loadReports();
-    } catch (caught: unknown) {
-      setActionError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setActionError(getAdminErrorMessage(error));
     } finally {
       setBusyReportId(null);
     }
@@ -271,20 +238,18 @@ export default function AdminReportList() {
   return (
     <section className="overflow-hidden rounded-3xl border border-border-soft bg-surface shadow-sm">
       <div className="border-b border-border-soft p-5 sm:p-7">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-brand-600">
-          Report verification
-        </p>
-        <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-brand-950">
-          Community hazard reports
-        </h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-text-secondary">
-          Pending reports are unverified observations. Only permitted status
-          transitions are offered; database policies must authorize each update.
-        </p>
+        <AdminSectionHeader
+          description="Pending reports are unverified observations. Only permitted status transitions are offered; database policies must authorize each update."
+          descriptionClassName="mt-2 max-w-3xl text-sm leading-6 text-text-secondary"
+          eyebrow="Report verification"
+          eyebrowClassName="text-xs font-bold uppercase tracking-[0.16em] text-brand-600"
+          title="Community hazard reports"
+          titleClassName="mt-2 text-2xl font-extrabold tracking-tight text-brand-950"
+        />
 
         <div className="mt-6 grid gap-4 rounded-2xl border border-border-soft bg-canvas p-4 sm:grid-cols-2 lg:grid-cols-3">
           <label className="text-xs font-bold uppercase tracking-wide text-brand-950">
-            Hazard type
+            Hazard type{' '}
             <select
               className="mt-2 block w-full rounded-xl border border-border-soft bg-surface px-3 py-2.5 text-sm font-medium normal-case tracking-normal text-brand-950 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               value={categoryFilter}
@@ -293,7 +258,7 @@ export default function AdminReportList() {
               }
             >
               <option value="all">All hazard types</option>
-              {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+              {Object.entries(ADMIN_CATEGORY_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
@@ -302,7 +267,7 @@ export default function AdminReportList() {
           </label>
 
           <label className="text-xs font-bold uppercase tracking-wide text-brand-950">
-            Community
+            Community{' '}
             <select
               className="mt-2 block w-full rounded-xl border border-border-soft bg-surface px-3 py-2.5 text-sm font-medium normal-case tracking-normal text-brand-950 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               value={communityFilter}
@@ -318,7 +283,7 @@ export default function AdminReportList() {
           </label>
 
           <label className="text-xs font-bold uppercase tracking-wide text-brand-950">
-            Report status
+            Report status{' '}
             <select
               className="mt-2 block w-full rounded-xl border border-border-soft bg-surface px-3 py-2.5 text-sm font-medium normal-case tracking-normal text-brand-950 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               value={statusFilter}
@@ -329,7 +294,7 @@ export default function AdminReportList() {
               <option value="all">All statuses</option>
               {STATUS_OPTIONS.map((status) => (
                 <option key={status} value={status}>
-                  {STATUS_LABELS[status]}
+                  {ADMIN_STATUS_LABELS[status]}
                 </option>
               ))}
             </select>
@@ -338,22 +303,21 @@ export default function AdminReportList() {
       </div>
 
       {actionError && (
-        <p
+        <AdminAlert
+          as="p"
           className="mx-5 mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 sm:mx-7"
-          role="alert"
         >
           {actionError}
-        </p>
+        </AdminAlert>
       )}
 
-      {isLoading ? (
-        <div
-          className="p-10 text-center text-sm text-text-secondary"
-          role="status"
-        >
+      {isLoading && (
+        <AdminLoadingState className="p-10 text-center text-sm text-text-secondary">
           Loading reports…
-        </div>
-      ) : error ? (
+        </AdminLoadingState>
+      )}
+
+      {!isLoading && error && (
         <div className="p-8 text-center">
           <p className="text-sm text-red-800" role="alert">
             {error}
@@ -366,14 +330,18 @@ export default function AdminReportList() {
             Retry
           </button>
         </div>
-      ) : filteredReports.length === 0 ? (
+      )}
+
+      {!isLoading && !error && filteredReports.length === 0 && (
         <div className="p-10 text-center">
           <p className="font-bold text-brand-950">No reports found</p>
           <p className="mt-2 text-sm text-text-secondary">
             Try changing or clearing the filters.
           </p>
         </div>
-      ) : (
+      )}
+
+      {!isLoading && !error && filteredReports.length > 0 && (
         <>
           <div className="grid gap-3 p-4 md:hidden">
             {filteredReports.map((report) => (
@@ -384,13 +352,13 @@ export default function AdminReportList() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 className="font-bold text-brand-950">
-                      {CATEGORY_LABELS[report.hazard_category]}
+                      {ADMIN_CATEGORY_LABELS[report.hazard_category]}
                     </h3>
                     <p className="mt-1 text-sm text-text-secondary">
                       {report.community_name}
                     </p>
                   </div>
-                  <StatusBadge status={report.status} />
+                  <AdminStatusBadge status={report.status} />
                 </div>
                 <ReportDetails
                   report={report}
@@ -434,7 +402,7 @@ export default function AdminReportList() {
                       {report.community_name}
                     </td>
                     <td className="whitespace-nowrap px-4 py-4 text-sm font-bold text-brand-950">
-                      {CATEGORY_LABELS[report.hazard_category]}
+                      {ADMIN_CATEGORY_LABELS[report.hazard_category]}
                     </td>
                     <td className="max-w-sm px-4 py-4">
                       <ReportDetails
@@ -449,10 +417,10 @@ export default function AdminReportList() {
                       />
                     </td>
                     <td className="whitespace-nowrap px-4 py-4 text-sm text-text-secondary">
-                      {formatDate(report.submitted_at)}
+                      {formatAdminDate(report.submitted_at)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-4">
-                      <StatusBadge status={report.status} />
+                      <AdminStatusBadge status={report.status} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-4">
                       <ReportActions
@@ -476,11 +444,11 @@ function ReportDetails({
   report,
   note,
   onNoteChange,
-}: {
+}: Readonly<{
   report: AdminReport;
   note: string;
   onNoteChange: (value: string) => void;
-}) {
+}>) {
   const imageUrl = getSafeImageUrl(report.image_url);
 
   return (
@@ -492,26 +460,11 @@ function ReportDetails({
         <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-brand-950">
           {report.description || 'No description provided.'}
         </p>
-        {imageUrl ? (
-          <a
-            className="mt-3 inline-block text-sm font-bold text-brand-600 underline decoration-brand-100 underline-offset-4 hover:text-brand-800"
-            href={imageUrl}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Open uploaded image
-          </a>
-        ) : report.image_url ? (
-          <p className="mt-3 text-sm text-text-secondary">
-            Image URL is unavailable or invalid.
-          </p>
-        ) : (
-          <p className="mt-3 text-sm text-text-secondary">No image attached.</p>
-        )}
+        <ReportImage imageUrl={imageUrl} originalUrl={report.image_url} />
       </details>
 
       <label className="block text-xs font-bold uppercase tracking-wide text-brand-950">
-        Admin notes
+        Admin notes{' '}
         <textarea
           className="mt-2 block w-full rounded-xl border border-border-soft bg-surface px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-brand-950 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
           value={note}
@@ -527,14 +480,11 @@ function ReportActions({
   report,
   busy,
   onUpdate,
-}: {
+}: Readonly<{
   report: AdminReport;
   busy: boolean;
-  onUpdate: (
-    report: AdminReport,
-    nextStatus: AdminReportStatus,
-  ) => Promise<void>;
-}) {
+  onUpdate: (report: AdminReport, nextStatus: ActionableStatus) => Promise<void>;
+}>) {
   const transitions = ALLOWED_TRANSITIONS[report.status];
 
   if (transitions.length === 0) {
@@ -549,13 +499,7 @@ function ReportActions({
     <div className="flex flex-wrap gap-2">
       {transitions.map((nextStatus) => (
         <button
-          className={
-            nextStatus === 'verified'
-              ? 'rounded-xl bg-brand-600 px-3.5 py-2.5 text-xs font-bold text-white transition hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-teal-300 focus:ring-offset-2'
-              : nextStatus === 'rejected'
-                ? 'rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-bold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-2'
-                : 'rounded-xl border border-border-soft bg-surface px-3.5 py-2.5 text-xs font-bold text-brand-800 transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-brand-600/30 focus:ring-offset-2'
-          }
+          className={TRANSITION_BUTTON_STYLES[nextStatus]}
           disabled={busy}
           key={nextStatus}
           onClick={() => void onUpdate(report, nextStatus)}
@@ -568,7 +512,7 @@ function ReportActions({
   );
 }
 
-function TableHeader({ children }: { children: string }) {
+function TableHeader({ children }: Readonly<{ children: string }>) {
   return (
     <th
       className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-text-secondary"
@@ -577,4 +521,35 @@ function TableHeader({ children }: { children: string }) {
       {children}
     </th>
   );
+}
+
+function ReportImage({
+  imageUrl,
+  originalUrl,
+}: Readonly<{
+  imageUrl: string | null;
+  originalUrl: string | null;
+}>) {
+  if (imageUrl) {
+    return (
+      <a
+        className="mt-3 inline-block text-sm font-bold text-brand-600 underline decoration-brand-100 underline-offset-4 hover:text-brand-800"
+        href={imageUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        Open uploaded image
+      </a>
+    );
+  }
+
+  if (originalUrl) {
+    return (
+      <p className="mt-3 text-sm text-text-secondary">
+        Image URL is unavailable or invalid.
+      </p>
+    );
+  }
+
+  return <p className="mt-3 text-sm text-text-secondary">No image attached.</p>;
 }

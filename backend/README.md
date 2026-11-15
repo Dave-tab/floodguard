@@ -94,8 +94,12 @@ means `profiles.role = 'ADMIN'`.
 | `CACHE_DIR` | no | `/opt/floodguard/cache` on the server |
 
 Frontend: `VITE_LOCATION_DATA_MODE=api` and `VITE_API_BASE_URL=https://<api host>`. A site
-served over HTTPS (Vercel) can only call an HTTPS API, so the server needs a domain and
-certificate before the deployed frontend can use it.
+served over HTTPS (Vercel) can only call an HTTPS API.
+
+**Live demo API (2026-11-15):** `https://192-248-172-28.sslip.io` (Vultr, London). sslip.io
+maps the name to the server IP; the Let's Encrypt certificate renews automatically
+(`certbot.timer`). Set `CORS_ORIGINS` in the server env to the deployed frontend URL once
+it is known (empty currently allows any origin).
 
 ## Deploy
 

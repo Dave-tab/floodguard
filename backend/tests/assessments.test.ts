@@ -6,81 +6,130 @@ import type { RiskRow } from "../src/db/schema.ts";
 import { Scheduler } from "../src/scheduler.ts";
 import { ids, NOW, setup } from "./fakes.ts";
 
-const row = (hoursAgo: number): RiskRow => ({
-  id: "r", community_id: ids.ikorodu, risk_level: "high", score: 55, confidence: "medium", explanation: "x", explanation_source: "ai",
-  assessed_at: new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString(), data_freshness: {}, recommended_actions: [],
+const row = (hoursAgo: number, o: Partial<RiskRow> = {}): RiskRow => ({
+  id: "r", community_id: ids.ikorodu, risk_level: "HIGH", score: 55, confidence: "MEDIUM", explanation: "x", explanation_source: "AI",
+  explanation_provider: "m", explanation_generated_at: null, recommended_actions: [], data_available: true, limitations: [], inputs_used: [],
+  inputs_missing: [], input_summary: {}, data_freshness: {}, methodology_version: "fg-risk-0.1.0",
+  assessed_at: new Date(NOW.getTime() - hoursAgo * 3_600_000).toISOString(), ...o,
+});
+const ikorodu = (db: { communities: { id: string }[] }) => db.communities.find((c) => c.id === ids.ikorodu)! as never;
+
+describe("reading stored rows", () => {
+  it("shows a stored row within 3 h, and an older row as unavailable (never as Low)", () => {
+    expect(riskFromRow(row(1), NOW)).toMatchObject({ status: "available", level: "high", confidenceLevel: "medium" });
+    const old = riskFromRow(row(4), NOW);
+    expect(old).toMatchObject({ status: "unavailable", level: null, score: null });
+  });
+  it("uses validUntil from input_summary when present", () => {
+    const r = row(1, { input_summary: { validUntil: new Date(NOW.getTime() - 60_000).toISOString() } });
+    expect(riskFromRow(r, NOW).status).toBe("unavailable");
+  });
+  it("does not invent a level for MODERATE or UNAVAILABLE", () => {
+    const m = riskFromRow(row(1, { risk_level: "MODERATE" }), NOW);
+    expect(m).toMatchObject({ status: "insufficient_data", level: null, score: null });
+    expect(m.limitations.join(" ")).toMatch(/moderate/);
+    expect(riskFromRow(row(1, { risk_level: "UNAVAILABLE", data_available: false, score: null }), NOW)).toMatchObject({ level: null, status: "insufficient_data" });
+  });
 });
 
 describe("expiry", () => {
-  it("shows a stored row within 3 h, and an older row as unavailable (never as Low)", () => {
-    expect(riskFromRow(row(1), NOW)).toMatchObject({ status: "available", level: "high" });
-    const old = riskFromRow(row(4), NOW);
-    expect(old.status).toBe("unavailable");
-    expect(old.level).toBeNull();
-    expect(old.score).toBeNull();
-  });
-  it("shows an expired cached assessment as unavailable when it cannot be refreshed", async () => {
+  it("drops expired assessments from the map and shows them as unavailable", async () => {
     let t = NOW;
     const { app, assessments, locations, db, pipe } = await setup({ now: () => t });
-    pipe.heavy = true;
-    await app.inject({ url: `/communities/${ids.ikorodu}/overview` }); // creates a cached assessment
+    pipe.rain = "wet";
+    await app.inject({ url: `/communities/${ids.ikorodu}/overview` });
     expect((await app.inject({ url: "/risk-assessments?status=active" })).json().data).toHaveLength(1);
     t = new Date(NOW.getTime() + 4 * 3_600_000);
-    // The map endpoint drops it once validUntil has passed (it never runs new assessments).
     expect((await app.inject({ url: "/risk-assessments?status=active" })).json().data).toEqual([]);
-    // Without a refresh, the card shows it as unavailable rather than its old level.
-    const { risk } = await assessments.forCommunity(db.communities[0]!, await locations.index(), { allowRun: false });
+    const { risk } = await assessments.forCommunity(ikorodu(db), await locations.index(), { allowRun: false });
     expect(risk).toMatchObject({ status: "unavailable", level: null, score: null });
   });
   it("reports missing coordinates as insufficient data, not Low", async () => {
     const { app } = await setup();
-    const res = await app.inject({ url: `/communities/${ids.noCoords}/overview` });
-    const { risk, weather } = res.json().data;
+    const { risk, weather } = (await app.inject({ url: `/communities/${ids.noCoords}/overview` })).json().data;
     expect(risk).toMatchObject({ status: "insufficient_data", level: null, score: null });
     expect(weather.status).toBe("unavailable");
   });
 });
 
+describe("storing assessments", () => {
+  it("fills every NOT NULL column with live enum values", async () => {
+    const { assessments, locations, db, pipe } = await setup();
+    pipe.rain = "wet";
+    const out = await assessments.assess(ikorodu(db), await locations.index());
+    expect(out!.storedInDb).toBe(true);
+    const r = db.risk[0]!;
+    expect(r).toMatchObject({
+      community_id: ids.ikorodu, risk_level: "HIGH", confidence: "LOW", data_available: true, explanation_source: "AI",
+      explanation_provider: "fake-model", methodology_version: "fg-risk-0.1.0",
+    });
+    expect(r.inputs_used).toContain("Rainfall forecast");
+    expect(r.inputs_missing).toContain("Local flood-history profile");
+    expect(r.input_summary).toMatchObject({ engineSeverity: "high", validUntil: out!.assessment.validUntil, nextReviewAt: out!.assessment.nextReviewAt, status: "active" });
+    expect(r.limitations.length).toBeGreaterThan(0);
+    expect(r.explanation_generated_at).toBe(NOW.toISOString());
+  });
+  it("never relabels severe: the row is refused by the enum, logged, and kept in the cache only", async () => {
+    const { assessments, locations, db, pipe, warnings, app } = await setup();
+    pipe.rain = "heavy";
+    const out = await assessments.assess(ikorodu(db), await locations.index());
+    expect(out!.assessment.severity).toBe("severe");
+    expect(out!.storedInDb).toBe(false);
+    expect(db.risk).toHaveLength(0);
+    expect(warnings.join(" ")).toMatch(/no SEVERE value/);
+    const { risk } = (await app.inject({ url: `/communities/${ids.ikorodu}/overview` })).json().data;
+    expect(risk.level).toBe("severe");
+  });
+  it("stores insufficient data as UNAVAILABLE with no score", async () => {
+    const { assessments, locations, db, pipe } = await setup();
+    pipe.rain = "dry";
+    const c = { ...ikorodu(db) as object, latitude: 11.0, longitude: 7.7 } as never; // no climatology offline
+    const out = await assessments.assess(c, await locations.index());
+    expect(out!.assessment.severity).toBeNull();
+    expect(db.risk[0]).toMatchObject({ risk_level: "UNAVAILABLE", data_available: false, score: null, confidence: "INSUFFICIENT" });
+  });
+  it("marks the engine summary as FALLBACK when no AI is configured", async () => {
+    const { assessments, locations, db } = await setup({ explain: null });
+    await assessments.assess(ikorodu(db), await locations.index());
+    expect(db.risk[0]).toMatchObject({ explanation_source: "FALLBACK", explanation_provider: "fg-risk-engine" });
+  });
+});
+
 describe("assessment pipeline", () => {
-  it("assesses on demand, caches, records a row and serves the map", async () => {
-    const { app, db, pipe } = await setup();
-    pipe.heavy = true;
-    const res = await app.inject({ url: `/communities/${ids.ikorodu}/overview` });
-    const { risk } = res.json().data;
-    expect(risk.status).toBe("available");
-    expect(["high", "severe", "critical"]).toContain(risk.level);
-    expect(risk.explanationStatus).toBe("ai");
-    expect(db.risk).toHaveLength(1);
-    expect(db.risk[0]).toMatchObject({ community_id: ids.ikorodu, risk_level: risk.level, explanation_source: "ai" });
+  it("assesses on demand, caches and serves the map", async () => {
+    const { app, pipe } = await setup();
+    pipe.rain = "wet";
+    const { risk } = (await app.inject({ url: `/communities/${ids.ikorodu}/overview` })).json().data;
+    expect(risk).toMatchObject({ status: "available", level: "high", explanationStatus: "ai" });
     const map = (await app.inject({ url: "/risk-assessments?status=active" })).json().data;
-    expect(map[0]).toMatchObject({ communityId: ids.ikorodu, severity: risk.level, status: "active", latitude: 6.62 });
+    expect(map[0]).toMatchObject({ communityId: ids.ikorodu, severity: "high", status: "active", latitude: 6.62 });
     expect(pipe.calls).toBe(1); // second request used the cache
   });
 
   it("requests an AI explanation only when severity or confidence level changes", async () => {
     const { assessments, locations, db, pipe, explainCalls } = await setup();
     const idx = await locations.index();
-    const c = db.communities[0]!;
-    pipe.heavy = false;
-    await assessments.assess(c, idx);
-    await assessments.assess(c, idx);
+    pipe.rain = "dry";
+    await assessments.assess(ikorodu(db), idx);
+    await assessments.assess(ikorodu(db), idx);
     expect(explainCalls).toHaveLength(1);
-    pipe.heavy = true;
-    await assessments.assess(c, idx);
+    pipe.rain = "wet";
+    await assessments.assess(ikorodu(db), idx);
     expect(explainCalls).toHaveLength(2);
     expect(pipe.calls).toBe(3);
   });
 
-  it("uses verified reports as evidence and pending reports only as signals", async () => {
+  it("uses VERIFIED reports as evidence and PENDING reports only as signals", async () => {
     const { assessments, locations, db } = await setup();
-    db.addReport("pending");
-    db.addReport("pending");
-    db.addReport("rejected");
-    const out = await assessments.assess(db.communities[0]!, await locations.index());
+    db.addReport("PENDING");
+    db.addReport("PENDING");
+    db.addReport("REJECTED");
+    db.addReport("IN_PROGRESS");
+    const out = await assessments.assess(ikorodu(db), await locations.index());
     expect(out!.assessment.signalsUnderReview).toBe(2);
     expect(out!.assessment.evidence.some((e) => e.type === "verified_incident")).toBe(false);
-    db.addReport("verified");
-    const out2 = await assessments.assess(db.communities[0]!, await locations.index());
+    db.addReport("VERIFIED");
+    const out2 = await assessments.assess(ikorodu(db), await locations.index());
     expect(out2!.assessment.evidence.some((e) => e.type === "verified_incident")).toBe(true);
   });
 
@@ -98,7 +147,7 @@ describe("assessment pipeline", () => {
     const { db, assessments, locations, pipe } = await setup({ now: () => t });
     const sched = new Scheduler(db, locations, assessments, { now: () => t, spacingMs: 0 });
     t = new Date(NOW.getTime() + 60_000);
-    db.addReport("verified", { reviewed_at: t.toISOString() });
+    db.addReport("VERIFIED", { reviewed_at: t.toISOString() });
     expect(await sched.pollReviews()).toEqual([ids.ikorodu]);
     expect(await sched.pollReviews()).toEqual([]);
     expect(await sched.runFull()).toBe(1); // only the active community with coordinates
@@ -118,8 +167,8 @@ describe("Open-Meteo budget", () => {
   });
   it("returns insufficient data (not Low) when a non-pilot cell has no climatology", async () => {
     const { assessments, locations, db, pipe } = await setup();
-    pipe.heavy = true;
-    const c = { ...db.communities[0]!, latitude: 11.0, longitude: 7.7 }; // far from all pilots; archive fetch fails offline
+    pipe.rain = "heavy";
+    const c = { ...ikorodu(db) as object, latitude: 11.0, longitude: 7.7 } as never;
     const out = await assessments.assess(c, await locations.index());
     expect(out!.assessment.severity).toBeNull();
     expect(out!.assessment.status).toBe("insufficient_data");

@@ -75,7 +75,7 @@ export class Scheduler {
   async pollReviews(): Promise<string[]> {
     const since = this.lastReviewCheck;
     this.lastReviewCheck = this.o.now().toISOString();
-    const reviewed = await this.db.listReports({ reviewedSince: since, statuses: ["verified", "rejected"], limit: 500 });
+    const reviewed = await this.db.listReports({ reviewedSince: since, statuses: ["VERIFIED", "REJECTED"], limit: 500 });
     const ids = [...new Set(reviewed.map((r) => r.community_id))];
     if (!ids.length) return [];
     const idx = await this.locations.index();

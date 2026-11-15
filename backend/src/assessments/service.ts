@@ -1,8 +1,13 @@
 // Runs the risk engine for a community, keeps the latest full result in the cache, records a
 // row in risk_assessments, and serves results to the API. Guardrails:
-// - only admin-verified reports (and community-specific official warnings) are evidence;
-//   pending reports are passed as unverified signals that never change the score;
+// - evidence = admin-VERIFIED reports only; PENDING reports are passed as unverified signals
+//   that never change the score. Alerts are not used: none of the live alert_type values
+//   (FLOOD_WARNING, WEATHER_NOTICE, SAFETY_ADVISORY, COMMUNITY_NOTICE, OTHER) marks a notice as
+//   an official government warning - an admin-written FLOOD_WARNING is the platform's own
+//   output, so feeding it back would let the system confirm itself;
 // - an expired or missing assessment is shown as unavailable, never as Low;
+// - "severe" is never relabelled: if the database enum lacks SEVERE the row is not stored and
+//   the cache stays the source of truth;
 // - the AI explanation is requested only when severity or confidence level changes.
 import {
   ASSESSMENT_VALIDITY_H,
@@ -16,13 +21,13 @@ import {
   type Observation,
   type PipelineResult,
   type RiskAssessment,
-  type Severity,
   type UnverifiedSignal,
   type WeatherResponse,
 } from "../../../risk-engine/src/index.ts";
-import type { Db, RiskInsert } from "../db/repo.ts";
-import type { AlertRow, CommunityRow, OptionalRiskColumn, ReportRow, RiskRow } from "../db/schema.ts";
+import { DbError, type Db } from "../db/repo.ts";
+import type { CommunityRow, DbExplanationSource, ReportRow, RiskInsert, RiskRow } from "../db/schema.ts";
 import { coords, type LocationIndex } from "../locations.ts";
+import { CATEGORY_EVIDENCE, INPUT_LABELS, confidenceFromDb, confidenceToDb, severityFromDb, severityToDb } from "../mapping.ts";
 import { WEIGHTS, type OpenMeteoBudget } from "./budget.ts";
 import type { ClimatologyService } from "./climatology.ts";
 import type { JsonStore } from "./store.ts";
@@ -31,9 +36,12 @@ export interface CachedAssessment {
   assessment: RiskAssessment;
   weather: WeatherResponse | null;
   explanation: ExplanationResult | null;
+  explanationAt: string | null;
   storedAt: string;
   errors: string[];
   pilotId: string | null;
+  /** Whether the row reached risk_assessments (false e.g. when SEVERE is not in the DB enum). */
+  storedInDb: boolean;
 }
 
 export type Explainer = (a: RiskAssessment) => Promise<ExplanationResult>;
@@ -50,30 +58,18 @@ export interface AssessmentDeps {
   now?: () => Date;
   pipeline?: Pipeline;
   log?: Log;
-  optionalRiskColumns?: () => Promise<OptionalRiskColumn[]>;
 }
 
-const SEVERITIES: Severity[] = ["low", "high", "severe", "critical"];
 const EVIDENCE_WINDOW_H = 7 * 24;
 const SIGNAL_WINDOW_H = 72;
-
-/** Report category -> engine observation category and intensity (0-1). */
-export const REPORT_EVIDENCE: Record<ReportRow["category"], { category: string; intensity: number }> = {
-  flooded_road: { category: "flooding", intensity: 0.8 },
-  overflowing_waterway: { category: "flooding", intensity: 0.8 },
-  rising_water_level: { category: "rising_water", intensity: 0.7 },
-  blocked_drainage: { category: "blocked_drain", intensity: 0.5 },
-  damaged_drainage: { category: "blocked_drain", intensity: 0.4 },
-  other: { category: "other", intensity: 0.3 },
-};
-const OFFICIAL_INTENSITY: Record<Severity, number> = { low: 0.3, high: 0.6, severe: 0.85, critical: 1 };
+export const ENGINE_PROVIDER = "fg-risk-engine";
 
 const silent: Log = { info: () => undefined, warn: () => undefined, error: () => undefined };
 const hoursAgo = (now: Date, h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
 
 export function reportToObservation(r: ReportRow, at: { lat: number; lon: number }): Observation {
   const own = coords(r);
-  const ev = REPORT_EVIDENCE[r.category] ?? REPORT_EVIDENCE.other;
+  const ev = CATEGORY_EVIDENCE[r.category] ?? CATEGORY_EVIDENCE.OTHER;
   return {
     id: r.id,
     type: "verified_incident",
@@ -88,17 +84,6 @@ export function reportToObservation(r: ReportRow, at: { lat: number; lon: number
   };
 }
 
-/** Only alerts explicitly typed as official warnings for this community count as evidence. */
-export function alertToObservation(a: AlertRow, communityId: string, at: { lat: number; lon: number }): Observation | null {
-  if ((a.alert_type ?? "").toLowerCase() !== "official_warning" || a.community_id !== communityId) return null;
-  const sev = (a.severity ?? "").toLowerCase() as Severity;
-  if (!SEVERITIES.includes(sev)) return null;
-  return {
-    id: a.id, type: "official_warning", category: "flooding", intensity: OFFICIAL_INTENSITY[sev],
-    lat: at.lat, lon: at.lon, insideCommunity: true, observedAt: a.created_at, source: `Official warning: ${a.title}`, officialSeverity: sev,
-  };
-}
-
 export function chooseExplanation(prev: CachedAssessment | null, a: RiskAssessment): "reuse" | "request" {
   if (!prev?.explanation) return "request";
   const same = prev.assessment.severity === a.severity && prev.assessment.confidence.level === a.confidence.level;
@@ -107,6 +92,44 @@ export function chooseExplanation(prev: CachedAssessment | null, a: RiskAssessme
 
 export function isCurrent(c: CachedAssessment, now: Date): boolean {
   return Date.parse(c.assessment.validUntil) > now.getTime();
+}
+
+/** Row for risk_assessments, filling every NOT NULL column. */
+export function toRiskRow(a: RiskAssessment, e: ExplanationResult | null, explanationAt: string | null, nowIso: string): RiskInsert {
+  const available = a.severity !== null;
+  const card = toFrontendRiskAssessment(a, e, { now: nowIso });
+  const source: DbExplanationSource = !e ? (a.summary ? "FALLBACK" : "NONE") : e.source === "llm" ? "AI" : "FALLBACK";
+  const used = [...new Set(a.evidence.map((x) => x.input))].filter((k) => !a.confidence.missingInputs.includes(k));
+  return {
+    community_id: a.communityId,
+    risk_level: severityToDb(a.severity),
+    score: available ? a.riskScore : null,
+    confidence: confidenceToDb(a.confidence.level),
+    explanation: e?.text ?? a.summary,
+    explanation_source: source,
+    explanation_provider: e?.source === "llm" ? e.model : ENGINE_PROVIDER,
+    explanation_generated_at: explanationAt ?? a.assessedAt,
+    recommended_actions: a.recommendedActions,
+    data_available: available,
+    limitations: card.limitations,
+    inputs_used: used.map((k) => INPUT_LABELS[k]),
+    inputs_missing: a.confidence.missingInputs.map((k) => INPUT_LABELS[k]),
+    input_summary: {
+      engineSeverity: a.severity,
+      riskScore: a.riskScore,
+      status: a.status,
+      validUntil: a.validUntil,
+      nextReviewAt: a.nextReviewAt,
+      severityCappedBy: a.severityCappedBy,
+      confidenceScore: a.confidence.score,
+      signalsUnderReview: a.signalsUnderReview,
+      drivers: a.drivers.map((d) => ({ factor: d.factor, value: d.value })),
+      evidence: a.evidence.map((x) => ({ input: x.input, type: x.type, source: x.source, measured: x.measured, freshness: x.freshness, weight: x.weight })),
+    },
+    data_freshness: a.dataFreshness,
+    methodology_version: a.methodVersion,
+    assessed_at: a.assessedAt,
+  };
 }
 
 export class AssessmentService {
@@ -145,15 +168,11 @@ export class AssessmentService {
       riverPoint: profile.riverPoint, climatology: profile.climatology, susceptibility: null,
     };
 
-    const [verified, pending, alerts] = await Promise.all([
-      this.d.db.listReports({ statuses: ["verified"], communityId: row.id, createdSince: hoursAgo(now, EVIDENCE_WINDOW_H) }),
-      this.d.db.listReports({ statuses: ["pending"], communityId: row.id, createdSince: hoursAgo(now, SIGNAL_WINDOW_H) }),
-      this.d.db.listActiveAlerts(nowIso, row.id).catch(() => [] as AlertRow[]),
+    const [verified, pending] = await Promise.all([
+      this.d.db.listReports({ statuses: ["VERIFIED"], communityId: row.id, createdSince: hoursAgo(now, EVIDENCE_WINDOW_H) }),
+      this.d.db.listReports({ statuses: ["PENDING"], communityId: row.id, createdSince: hoursAgo(now, SIGNAL_WINDOW_H) }),
     ]);
-    const observations: Observation[] = [
-      ...verified.map((r) => reportToObservation(r, at)),
-      ...alerts.map((a) => alertToObservation(a, row.id, at)).filter((o): o is Observation => o !== null),
-    ];
+    const observations = verified.map((r) => reportToObservation(r, at));
     const unverifiedSignals: UnverifiedSignal[] = pending.map((r) => {
       const c = coords(r) ?? at;
       return { id: r.id, category: r.category, observedAt: r.created_at, lat: c.lat, lon: c.lon };
@@ -177,41 +196,41 @@ export class AssessmentService {
 
     const prev = await this.cached(row.id);
     let explanation: ExplanationResult | null = null;
+    let explanationAt: string | null = null;
     if (this.d.explain) {
       if (chooseExplanation(prev, a) === "reuse" && prev?.explanation) {
         explanation = prev.explanation.source === "llm" ? prev.explanation : { ...prev.explanation, text: a.summary };
+        explanationAt = prev.explanation.source === "llm" ? prev.explanationAt : nowIso;
       } else {
         explanation = await this.d.explain(a).catch((e: unknown) => ({ text: a.summary, source: "engine" as const, model: "unknown", error: String(e) }));
+        explanationAt = nowIso;
       }
     }
 
-    const cached: CachedAssessment = { assessment: a, weather: result.weather, explanation, storedAt: nowIso, errors: result.errors, pilotId: profile.pilotId };
+    const storedInDb = await this.record(a, explanation, explanationAt, nowIso);
+    const cached: CachedAssessment = {
+      assessment: a, weather: result.weather, explanation, explanationAt, storedAt: nowIso, errors: result.errors, pilotId: profile.pilotId, storedInDb,
+    };
     await this.d.store.set(`assessment-${row.id}`, cached);
-    await this.record(a, explanation).catch((e: unknown) => this.log.error({ community: row.id, err: String(e) }, "could not store risk_assessments row"));
-    this.log.info({ community: row.id, severity: a.severity, score: a.riskScore, confidence: a.confidence.level, explanation: explanation?.source ?? "none" }, "assessed");
+    this.log.info({ community: row.id, severity: a.severity, score: a.riskScore, confidence: a.confidence.level, explanation: explanation?.source ?? "none", storedInDb }, "assessed");
     return cached;
   }
 
-  private async record(a: RiskAssessment, e: ExplanationResult | null) {
-    const present = new Set(await (this.d.optionalRiskColumns?.() ?? Promise.resolve([])));
-    const row: RiskInsert = {
-      community_id: a.communityId,
-      risk_level: a.severity,
-      score: a.riskScore,
-      confidence: a.confidence.level,
-      explanation: e?.text ?? a.summary,
-      explanation_source: e ? (e.source === "llm" ? "ai" : "deterministic_template") : "deterministic_template",
-      assessed_at: a.assessedAt,
-      data_freshness: a.dataFreshness,
-      recommended_actions: a.recommendedActions,
-    };
-    const optional: Record<OptionalRiskColumn, unknown> = {
-      summary: a.summary, status: a.status, valid_until: a.validUntil, next_review_at: a.nextReviewAt, factors: a.drivers,
-      missing_inputs: a.confidence.missingInputs, inputs_json: a.evidence, method_version: a.methodVersion,
-      confidence_score: a.confidence.score, provider: [...new Set(a.evidence.map((x) => x.source))].join("; ") || null,
-    };
-    for (const [k, v] of Object.entries(optional) as [OptionalRiskColumn, unknown][]) if (present.has(k)) row[k] = v;
-    await this.d.db.insertRiskAssessment(row);
+  private async record(a: RiskAssessment, e: ExplanationResult | null, explanationAt: string | null, nowIso: string): Promise<boolean> {
+    try {
+      await this.d.db.insertRiskAssessment(toRiskRow(a, e, explanationAt, nowIso));
+      return true;
+    } catch (err) {
+      if (err instanceof DbError && err.code === "22P02" && a.severity === "severe") {
+        this.log.warn(
+          { community: a.communityId },
+          "risk_assessments.risk_level has no SEVERE value; this SEVERE assessment is kept in the API cache only and is NOT relabelled. See supabase/proposed_severe_level.sql",
+        );
+      } else {
+        this.log.error({ community: a.communityId, err: String(err) }, "could not store risk_assessments row");
+      }
+      return false;
+    }
   }
 
   /**
@@ -252,26 +271,30 @@ export function noCoordinatesRisk(): FrontendRiskAssessment {
   };
 }
 
-/** Fallback from a stored row (fewer details than the cache). Expired rows are never shown as a level. */
+/** Fallback from a stored row. Expired rows, MODERATE and UNAVAILABLE are never shown as a level. */
 export function riskFromRow(r: RiskRow, now: Date): FrontendRiskAssessment {
-  const validUntil = new Date(Date.parse(r.assessed_at) + ASSESSMENT_VALIDITY_H * 3_600_000).toISOString();
+  const summaryValid = (r.input_summary as { validUntil?: unknown } | null)?.validUntil;
+  const validUntil = typeof summaryValid === "string" && !Number.isNaN(Date.parse(summaryValid))
+    ? summaryValid
+    : new Date(Date.parse(r.assessed_at) + ASSESSMENT_VALIDITY_H * 3_600_000).toISOString();
   if (Date.parse(validUntil) <= now.getTime()) {
     return { ...unavailableRisk("This assessment has expired and is not a current warning."), assessedAt: r.assessed_at, validUntil };
   }
-  const level = SEVERITIES.includes(r.risk_level as Severity) ? (r.risk_level as Severity) : null;
-  const confidenceLevel = (["high", "medium", "low", "insufficient"] as const).find((x) => x === r.confidence) ?? "insufficient";
+  const { level, note } = severityFromDb(r.risk_level);
+  const usable = level !== null && r.data_available !== false;
   return {
     ...baseRisk(),
-    status: level ? "available" : "insufficient_data",
-    level,
-    score: level && typeof r.score === "number" ? r.score : null,
+    status: usable ? "available" : "insufficient_data",
+    level: usable ? level : null,
+    score: usable && typeof r.score === "number" ? r.score : usable && r.score != null ? Number(r.score) : null,
     summary: r.explanation,
     explanation: r.explanation,
-    explanationStatus: r.explanation_source === "ai" ? "ai" : r.explanation ? "deterministic_template" : "unavailable",
-    missingInputs: [],
-    limitations: ["Details of this assessment are not available; only the summary was stored."],
+    explanationStatus: r.explanation_source === "AI" ? "ai" : r.explanation ? "deterministic_template" : "unavailable",
+    missingInputs: r.inputs_missing ?? [],
+    limitations: [...(r.limitations ?? []), ...(note ? [note] : [])],
     assessedAt: r.assessed_at,
-    confidenceLevel,
+    confidenceLevel: confidenceFromDb(r.confidence),
+    methodVersion: r.methodology_version ?? "",
     validUntil,
   };
 }

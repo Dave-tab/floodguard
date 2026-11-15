@@ -1,12 +1,19 @@
-// States, LGAs and communities. The frontend selects States/LGAs from the bundled Open Admin
-// Data Nigeria files (ids like "NG025" / "NG025012") and sends those ids back to us, while the
-// database has its own states/lgas tables. This module maps between the two so either id works.
+// States, LGAs and communities.
+//
+// The frontend selects States/LGAs from its bundled Open Admin Data Nigeria files (ids like
+// "NG025" / "NG025012") and sends those ids back; the database uses uuids. This module
+// resolves either kind of id:
+//   dataset id -> DB row by `code` or `source_record_id`, then by case-insensitive name
+//   within the state of the same name.
+// The states/LGAs endpoints serve the database rows when those tables have data, and the
+// bundled dataset while they are empty (they were empty on 2026-11-15).
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { Db } from "./db/repo.ts";
 import type { CommunityRow, LgaRow, StateRow } from "./db/schema.ts";
+import { verificationFromDb } from "./mapping.ts";
 
-export interface AdminEntity { id: string; name_en: string; parent_id?: string | null; lat?: number | null; lon?: number | null }
+export interface AdminEntity { id: string; name_en: string; parent_id?: string | null }
 export interface AdminDataset { states: AdminEntity[]; lgas: AdminEntity[] }
 
 const DATA_DIR = fileURLToPath(new URL("../../public/data/nigeria/", import.meta.url));
@@ -18,67 +25,79 @@ export async function loadAdminDataset(dir = DATA_DIR): Promise<AdminDataset> {
 }
 
 export const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "");
+const stateNorm = (s: string) => norm(s.replace(/federal capital territory/i, "fct"));
 
-export interface LgaInfo { extId: string; dbIds: string[]; name: string; stateExtId: string; stateName: string }
-export interface StateInfo { extId: string; dbIds: string[]; name: string; code: string | null }
+export interface StateInfo { id: string; name: string; code: string | null; dbId: string | null; datasetId: string | null }
+export interface LgaInfo { id: string; name: string; stateId: string; stateName: string; dbId: string | null; datasetId: string | null }
 
-/** Joined view of administrative areas: dataset ids are the external ids the frontend uses. */
 export class LocationIndex {
+  /** What the states/LGAs endpoints serve: DB rows if present, else the dataset. */
+  readonly source: "database" | "dataset";
   readonly states: StateInfo[];
   readonly lgas: LgaInfo[];
-  private readonly lgaByAnyId = new Map<string, LgaInfo>();
-  private readonly stateByAnyId = new Map<string, StateInfo>();
+  private readonly stateById = new Map<string, StateInfo>();
+  private readonly lgaById = new Map<string, LgaInfo>();
 
   constructor(ds: AdminDataset, dbStates: StateRow[], dbLgas: LgaRow[]) {
-    const stateByNorm = new Map<string, StateInfo>();
-    this.states = ds.states.map((s) => {
-      const info: StateInfo = { extId: s.id, dbIds: [], name: s.name_en, code: null };
-      stateByNorm.set(norm(s.name_en), info);
-      return info;
-    });
-    for (const s of this.states) this.stateByAnyId.set(s.extId, s);
-    for (const r of dbStates) {
-      const info = this.stateByAnyId.get(r.id) ?? (r.code ? this.stateByAnyId.get(r.code) : undefined) ?? stateByNorm.get(norm(r.name))
-        ?? stateByNorm.get(norm(r.name.replace(/federal capital territory/i, "fct")));
-      if (!info) continue;
-      info.dbIds.push(r.id);
-      info.code = r.code;
-      this.stateByAnyId.set(r.id, info);
-    }
+    this.source = dbStates.length && dbLgas.length ? "database" : "dataset";
+    const dsStateById = new Map(ds.states.map((s) => [s.id, s]));
 
-    const lgaByKey = new Map<string, LgaInfo>();
-    this.lgas = ds.lgas.map((l) => {
-      const st = this.stateByAnyId.get(l.parent_id ?? "");
-      const info: LgaInfo = { extId: l.id, dbIds: [], name: l.name_en, stateExtId: l.parent_id ?? "", stateName: st?.name ?? "" };
-      lgaByKey.set(`${info.stateExtId}|${norm(l.name_en)}`, info);
-      return info;
-    });
-    for (const l of this.lgas) this.lgaByAnyId.set(l.extId, l);
-    for (const r of dbLgas) {
-      const st = this.stateByAnyId.get(r.state_id);
-      const info = this.lgaByAnyId.get(r.id) ?? (r.code ? this.lgaByAnyId.get(r.code) : undefined)
-        ?? (st ? lgaByKey.get(`${st.extId}|${norm(r.name)}`) : undefined);
-      if (!info) continue;
-      info.dbIds.push(r.id);
-      this.lgaByAnyId.set(r.id, info);
+    if (this.source === "database") {
+      const dbStateByNorm = new Map<string, StateRow>();
+      const dbStateByKey = new Map<string, StateRow>();
+      for (const s of dbStates) {
+        dbStateByNorm.set(stateNorm(s.name), s);
+        for (const k of [s.code, s.source_record_id]) if (k) dbStateByKey.set(k, s);
+      }
+      // dataset state -> DB state
+      const dsToDbState = new Map<string, string>();
+      for (const s of ds.states) {
+        const m = dbStateByKey.get(s.id) ?? dbStateByNorm.get(stateNorm(s.name_en));
+        if (m) dsToDbState.set(s.id, m.id);
+      }
+      const dbToDsState = new Map([...dsToDbState].map(([d, b]) => [b, d]));
+      this.states = dbStates.map((s) => ({ id: s.id, name: s.name, code: s.code, dbId: s.id, datasetId: dbToDsState.get(s.id) ?? null }));
+      for (const s of this.states) {
+        this.stateById.set(s.id, s);
+        if (s.datasetId) this.stateById.set(s.datasetId, s);
+      }
+
+      const stateName = new Map(dbStates.map((s) => [s.id, s.name]));
+      const dbLgaByKey = new Map<string, LgaRow>();
+      const dbLgaByName = new Map<string, LgaRow>();
+      for (const l of dbLgas) {
+        for (const k of [l.code, l.source_record_id]) if (k) dbLgaByKey.set(k, l);
+        dbLgaByName.set(`${l.state_id}|${norm(l.name)}`, l);
+      }
+      this.lgas = dbLgas.map((l) => ({ id: l.id, name: l.name, stateId: l.state_id, stateName: stateName.get(l.state_id) ?? "", dbId: l.id, datasetId: null }));
+      for (const l of this.lgas) this.lgaById.set(l.id, l);
+      for (const d of ds.lgas) {
+        const dbState = dsToDbState.get(d.parent_id ?? "");
+        const m = dbLgaByKey.get(d.id) ?? (dbState ? dbLgaByName.get(`${dbState}|${norm(d.name_en)}`) : undefined);
+        const info = m ? this.lgaById.get(m.id) : undefined;
+        if (info) {
+          info.datasetId ??= d.id;
+          this.lgaById.set(d.id, info);
+        }
+      }
+    } else {
+      this.states = ds.states.map((s) => ({ id: s.id, name: s.name_en, code: null, dbId: null, datasetId: s.id }));
+      for (const s of this.states) this.stateById.set(s.id, s);
+      this.lgas = ds.lgas.map((l) => ({
+        id: l.id, name: l.name_en, stateId: l.parent_id ?? "", stateName: dsStateById.get(l.parent_id ?? "")?.name_en ?? "", dbId: null, datasetId: l.id,
+      }));
+      for (const l of this.lgas) this.lgaById.set(l.id, l);
     }
   }
 
-  lga(anyId: string | null | undefined): LgaInfo | null {
-    return anyId ? this.lgaByAnyId.get(anyId) ?? null : null;
-  }
-  state(anyId: string | null | undefined): StateInfo | null {
-    return anyId ? this.stateByAnyId.get(anyId) ?? null : null;
-  }
+  state(anyId: string | null | undefined) { return anyId ? this.stateById.get(anyId) ?? null : null; }
+  lga(anyId: string | null | undefined) { return anyId ? this.lgaById.get(anyId) ?? null : null; }
   lgasOfState(stateAnyId: string): LgaInfo[] {
     const st = this.state(stateAnyId);
-    return st ? this.lgas.filter((l) => l.stateExtId === st.extId) : [];
+    return st ? this.lgas.filter((l) => l.stateId === st.id) : [];
   }
-  /** Every id the communities.lga_id column might hold for this LGA. */
-  lgaIdCandidates(anyId: string): string[] {
-    const info = this.lga(anyId);
-    return info ? [...new Set([info.extId, ...info.dbIds])] : [];
-  }
+  /** DB lga uuid for a frontend or DB LGA id (null when the LGA is not in the database). */
+  dbLgaId(anyId: string): string | null { return this.lga(anyId)?.dbId ?? null; }
 }
 
 /** Caches the index (states/LGAs change rarely). */
@@ -122,14 +141,13 @@ export function toResidentCommunity(c: CommunityRow, idx: LocationIndex): Reside
 
 export function toLocationCommunity(c: CommunityRow, idx: LocationIndex): LocationCommunity {
   const lga = idx.lga(c.lga_id);
-  const vs = c.verification_status;
   return {
     id: c.id, name: c.name,
-    stateId: lga?.stateExtId ?? "", stateName: lga?.stateName || UNKNOWN,
-    lgaId: lga?.extId ?? c.lga_id ?? "", lgaName: lga?.name ?? UNKNOWN,
+    stateId: lga?.stateId ?? "", stateName: lga?.stateName || UNKNOWN,
+    lgaId: lga?.id ?? c.lga_id, lgaName: lga?.name ?? UNKNOWN,
     wardId: c.ward_id, wardName: null,
     latitude: num(c.latitude), longitude: num(c.longitude),
-    verificationStatus: vs === "verified" || vs === "under_review" ? vs : "unverified",
+    verificationStatus: verificationFromDb(c.verification_status),
     sourceName: "FloodGuard community registry", isDemoData: false,
   };
 }

@@ -1,7 +1,7 @@
 // Static public content. SAFETY_GUIDELINES is copied verbatim from the team's frontend
 // (src/data/mockResidentData.ts on main) so both show the same guidance. No emergency
 // numbers are served until the team has a verified, sourced list.
-import type { HazardCategory } from "./db/schema.ts";
+import type { HazardCategory } from "./mapping.ts";
 
 export interface SafetyGuidelineItem { id: string; title: string; description: string; category: "before" | "during" | "after" | "general" }
 

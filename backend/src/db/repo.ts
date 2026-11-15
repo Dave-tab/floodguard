@@ -1,17 +1,18 @@
 // Data access. Routes and services depend on the Db interface only, so tests use an
-// in-memory implementation and every Supabase query lives in this file.
+// in-memory implementation and every Supabase query lives in this file. Values here are the
+// database's own (UPPERCASE enums); conversion happens in ../mapping.ts.
+import { randomInt } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   COLS,
-  OPTIONAL_RISK_COLUMNS,
   T,
-  type AlertRow,
   type CommunityRow,
+  type DbReportStatus,
   type LgaRow,
-  type OptionalRiskColumn,
   type PublicReportRow,
+  type ReportHistoryInsert,
   type ReportRow,
-  type ReportStatus,
+  type RiskInsert,
   type RiskRow,
   type StateRow,
 } from "./schema.ts";
@@ -25,7 +26,7 @@ export interface CommunityFilter {
 }
 
 export interface ReportFilter {
-  statuses?: ReportStatus[];
+  statuses?: DbReportStatus[];
   communityId?: string;
   reporterId?: string;
   createdSince?: string;
@@ -34,8 +35,14 @@ export interface ReportFilter {
 }
 
 export type NewReport = Pick<ReportRow, "reporter_id" | "community_id" | "category" | "description" | "latitude" | "longitude">;
-export interface ReviewPatch { status: "verified" | "rejected"; reviewed_by: string; reviewed_at: string; admin_note: string | null }
-export type RiskInsert = Omit<RiskRow, "id" | "created_at"> & Partial<Record<OptionalRiskColumn, unknown>>;
+export interface ReviewPatch { status: "VERIFIED" | "REJECTED"; reviewed_by: string; reviewed_at: string; admin_note: string | null }
+
+/** Error carrying the Postgres / PostgREST code (e.g. 22P02 invalid enum, 23505 unique violation). */
+export class DbError extends Error {
+  constructor(context: string, readonly code: string | undefined, detail: string) {
+    super(`${context}: ${detail}${code ? ` (${code})` : ""}`);
+  }
+}
 
 export interface Db {
   listStates(): Promise<StateRow[]>;
@@ -44,20 +51,18 @@ export interface Db {
   getCommunity(id: string): Promise<CommunityRow | null>;
   /** Full report rows (admin / owner use only). */
   listReports(f?: ReportFilter): Promise<ReportRow[]>;
-  /** Verified reports with public-safe columns only. */
+  /** VERIFIED reports with public-safe columns only. */
   listPublicReports(f: { communityId?: string; limit?: number }): Promise<PublicReportRow[]>;
   getReport(id: string): Promise<ReportRow | null>;
-  insertReport(r: NewReport): Promise<ReportRow>;
-  /** Conditional update: only succeeds while the report is still pending. */
+  /** Inserts with status PENDING and the given reference code. Throws DbError (23505 on duplicate code). */
+  insertReport(r: NewReport, referenceCode: string): Promise<ReportRow>;
+  /** Conditional update: only succeeds while the report is still PENDING. */
   reviewReport(id: string, patch: ReviewPatch): Promise<ReportRow | null>;
+  insertReportHistory(h: ReportHistoryInsert): Promise<void>;
   countCommunities(activeOnly: boolean): Promise<number | null>;
-  countReports(status: ReportStatus): Promise<number | null>;
   getProfileRole(userId: string): Promise<string | null>;
   insertRiskAssessment(row: RiskInsert): Promise<void>;
   latestRiskAssessment(communityId: string): Promise<RiskRow | null>;
-  listActiveAlerts(nowIso: string, communityId?: string): Promise<AlertRow[]>;
-  /** Which of the optional risk_assessments columns exist. */
-  probeOptionalRiskColumns(): Promise<OptionalRiskColumn[]>;
 }
 
 export interface AuthVerifier {
@@ -65,10 +70,19 @@ export interface AuthVerifier {
   verify(token: string): Promise<{ id: string } | null>;
 }
 
-const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+export const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
 function fail(context: string, error: { message: string; code?: string } | null): never {
-  throw new Error(`${context}: ${error?.message ?? "unknown error"}${error?.code ? ` (${error.code})` : ""}`);
+  throw new DbError(context, error?.code, error?.message ?? "unknown error");
+}
+
+/** FG-YYMMDD-XXXXX, five characters from an alphabet without look-alikes (0/O, 1/I). */
+export function newReferenceCode(now: Date): string {
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const d = now.toISOString().slice(2, 10).replace(/-/g, "");
+  let s = "";
+  for (let i = 0; i < 5; i++) s += alphabet[randomInt(alphabet.length)];
+  return `FG-${d}-${s}`;
 }
 
 export function createSupabase(url: string, secretKey: string): SupabaseClient {
@@ -92,11 +106,12 @@ export class SupabaseDb implements Db {
 
   async listCommunities(f: CommunityFilter = {}) {
     const ids = f.ids?.filter(isUuid);
-    if (ids && !ids.length) return [];
+    const lgaIds = f.lgaIds?.filter(isUuid);
+    if ((ids && !ids.length) || (lgaIds && !lgaIds.length)) return [];
     let q = this.sb.from(T.communities).select(COLS.communities);
     if (f.activeOnly) q = q.eq("is_active", true);
     if (ids) q = q.in("id", ids);
-    if (f.lgaIds) q = q.in("lga_id", f.lgaIds);
+    if (lgaIds) q = q.in("lga_id", lgaIds);
     if (f.search) q = q.ilike("name", `%${f.search.replace(/[%_,()]/g, " ")}%`);
     const { data, error } = await q.order("name").limit(f.limit ?? 5000);
     if (error) fail("communities", error);
@@ -111,6 +126,7 @@ export class SupabaseDb implements Db {
   }
 
   async listReports(f: ReportFilter = {}) {
+    if (f.communityId && !isUuid(f.communityId)) return [];
     let q = this.sb.from(T.reports).select(COLS.reports);
     if (f.statuses) q = q.in("status", f.statuses);
     if (f.communityId) q = q.eq("community_id", f.communityId);
@@ -123,7 +139,8 @@ export class SupabaseDb implements Db {
   }
 
   async listPublicReports(f: { communityId?: string; limit?: number }) {
-    let q = this.sb.from(T.reports).select(COLS.reportsPublic).eq("status", "verified");
+    if (f.communityId && !isUuid(f.communityId)) return [];
+    let q = this.sb.from(T.reports).select(COLS.reportsPublic).eq("status", "VERIFIED");
     if (f.communityId) q = q.eq("community_id", f.communityId);
     const { data, error } = await q.order("reviewed_at", { ascending: false }).limit(f.limit ?? 500);
     if (error) fail("public reports", error);
@@ -137,8 +154,12 @@ export class SupabaseDb implements Db {
     return (data as unknown as ReportRow) ?? null;
   }
 
-  async insertReport(r: NewReport) {
-    const { data, error } = await this.sb.from(T.reports).insert({ ...r, status: "pending" }).select(COLS.reports).single();
+  async insertReport(r: NewReport, referenceCode: string) {
+    const { data, error } = await this.sb
+      .from(T.reports)
+      .insert({ ...r, reference_code: referenceCode, status: "PENDING" })
+      .select(COLS.reports)
+      .single();
     if (error) fail("insert report", error);
     return data as unknown as ReportRow;
   }
@@ -148,22 +169,22 @@ export class SupabaseDb implements Db {
       .from(T.reports)
       .update({ ...patch, updated_at: patch.reviewed_at })
       .eq("id", id)
-      .eq("status", "pending")
+      .eq("status", "PENDING")
       .select(COLS.reports)
       .maybeSingle();
     if (error) fail("review report", error);
     return (data as unknown as ReportRow) ?? null;
   }
 
+  async insertReportHistory(h: ReportHistoryInsert) {
+    const { error } = await this.sb.from(T.reportHistory).insert(h);
+    if (error) fail("report history", error);
+  }
+
   async countCommunities(activeOnly: boolean) {
     let q = this.sb.from(T.communities).select("id", { count: "exact", head: true });
     if (activeOnly) q = q.eq("is_active", true);
     const { count, error } = await q;
-    return error ? null : count;
-  }
-
-  async countReports(status: ReportStatus) {
-    const { count, error } = await this.sb.from(T.reports).select("id", { count: "exact", head: true }).eq("status", status);
     return error ? null : count;
   }
 
@@ -190,23 +211,6 @@ export class SupabaseDb implements Db {
       .maybeSingle();
     if (error) fail("latest risk", error);
     return (data as unknown as RiskRow) ?? null;
-  }
-
-  async listActiveAlerts(nowIso: string, communityId?: string) {
-    let q = this.sb.from(T.alerts).select(COLS.alerts).or(`expires_at.is.null,expires_at.gt.${nowIso}`);
-    if (communityId && isUuid(communityId)) q = q.or(`community_id.is.null,community_id.eq.${communityId}`);
-    const { data, error } = await q.order("created_at", { ascending: false }).limit(200);
-    if (error) fail("alerts", error);
-    return (data ?? []) as unknown as AlertRow[];
-  }
-
-  async probeOptionalRiskColumns() {
-    const present: OptionalRiskColumn[] = [];
-    for (const c of OPTIONAL_RISK_COLUMNS) {
-      const { error } = await this.sb.from(T.risk).select(c).limit(0);
-      if (!error) present.push(c);
-    }
-    return present;
   }
 }
 

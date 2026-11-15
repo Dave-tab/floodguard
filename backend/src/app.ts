@@ -5,9 +5,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from "zod";
 import { isCurrent, type AssessmentService } from "./assessments/service.ts";
 import { CATEGORY_LABELS, SAFETY_GUIDELINES } from "./content.ts";
-import type { AuthVerifier, Db } from "./db/repo.ts";
-import { HAZARD_CATEGORIES, type CommunityRow, type PublicReportRow, type ReportRow } from "./db/schema.ts";
+import { DbError, newReferenceCode, type AuthVerifier, type Db } from "./db/repo.ts";
+import type { CommunityRow, PublicReportRow, ReportRow } from "./db/schema.ts";
 import { coords, haversineKm, toLocationCommunity, toResidentCommunity, type LocationIndex, type LocationService } from "./locations.ts";
+import { CATEGORY_TO_DB, HAZARD_CATEGORIES, STATUS_TO_DB, categoryFromDb, isAdminRole, statusFromDb } from "./mapping.ts";
 import { toWeatherContext } from "./weather.ts";
 
 export interface AppDeps {
@@ -60,10 +61,12 @@ function bearer(req: FastifyRequest): string | null {
 export function hazardRecord(r: PublicReportRow, c: CommunityRow | undefined, idx: LocationIndex) {
   const lga = idx.lga(c?.lga_id);
   const at = coords(r) ?? (c ? coords(c) : null);
+  const category = categoryFromDb(r.category);
   return {
     id: r.id,
-    title: `${CATEGORY_LABELS[r.category] ?? "Hazard"}${c ? ` in ${c.name}` : ""}`,
-    category: r.category,
+    title: `${CATEGORY_LABELS[category]}${c ? ` in ${c.name}` : ""}`,
+    category,
+    dbCategory: r.category,
     description: r.description,
     communityId: r.community_id,
     communityName: c?.name ?? "Unknown community",
@@ -81,8 +84,10 @@ export function hazardRecord(r: PublicReportRow, c: CommunityRow | undefined, id
 
 function ownReport(r: ReportRow) {
   return {
-    id: r.id, communityId: r.community_id, category: r.category, description: r.description, latitude: r.latitude, longitude: r.longitude,
-    status: r.status, photoPath: r.photo_path, reviewNote: r.admin_note, reviewedAt: r.reviewed_at, createdAt: r.created_at, updatedAt: r.updated_at,
+    id: r.id, referenceCode: r.reference_code, communityId: r.community_id, category: categoryFromDb(r.category), dbCategory: r.category,
+    description: r.description, latitude: r.latitude, longitude: r.longitude,
+    // pending | verified | rejected, or the raw in_progress / resolved (not approved statuses; owner/admin only)
+    status: statusFromDb(r.status), photoPath: r.photo_path, reviewNote: r.admin_note, reviewedAt: r.reviewed_at, createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
 
@@ -117,7 +122,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const requireAdmin = async (req: FastifyRequest) => {
     const user = await requireUser(req);
     const role = await db.getProfileRole(user.id).catch(() => null);
-    if (role !== "admin") throw new HttpError(403, "Administrator access is required.");
+    if (!isAdminRole(role)) throw new HttpError(403, "Administrator access is required.");
     return user;
   };
   const activeCommunity = async (id: string) => {
@@ -144,9 +149,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get("/locations/states", async () => {
     const idx = await locations.index();
     return {
-      data: idx.states.map((s) => ({ id: s.extId, name: s.name, code: s.code, isDemoData: false })),
+      data: idx.states.map((s) => ({ id: s.id, name: s.name, code: s.code, isDemoData: false })),
       coverage: "national",
-      source: "Open Admin Data Nigeria (OCHA COD / INEC), CC BY 4.0",
+      source: idx.source === "database" ? "FloodGuard database" : "Open Admin Data Nigeria (OCHA COD / INEC), CC BY 4.0",
     };
   });
 
@@ -155,16 +160,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const st = idx.state(req.params.stateId);
     if (!st) throw new HttpError(404, "State not found.");
     return {
-      data: idx.lgasOfState(st.extId).map((l) => ({ id: l.extId, name: l.name, stateId: st.extId, stateName: st.name, isDemoData: false })),
+      data: idx.lgasOfState(st.id).map((l) => ({ id: l.id, name: l.name, stateId: st.id, stateName: st.name, isDemoData: false })),
       coverage: "national",
     };
   });
 
   app.get<{ Params: { lgaId: string } }>("/locations/lgas/:lgaId/communities", async (req) => {
     const idx = await locations.index();
-    const ids = idx.lgaIdCandidates(req.params.lgaId);
-    if (!ids.length) throw new HttpError(404, "LGA not found.");
-    const rows = await db.listCommunities({ activeOnly: true, lgaIds: ids });
+    const lga = idx.lga(req.params.lgaId);
+    if (!lga) throw new HttpError(404, "LGA not found.");
+    // An LGA that is not in the database yet has no communities (communities.lga_id references lgas).
+    const rows = lga.dbId ? await db.listCommunities({ activeOnly: true, lgaIds: [lga.dbId] }) : [];
     return { data: rows.map((c) => toLocationCommunity(c, idx)), coverage: "partial" };
   });
 
@@ -210,8 +216,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       data: {
         matchStatus: matched ? "matched" : "partial",
         location: {
-          state: lga ? { id: lga.stateExtId, name: lga.stateName, code: idx.state(lga.stateExtId)?.code ?? null, isDemoData: false } : null,
-          lga: lga ? { id: lga.extId, name: lga.name, stateId: lga.stateExtId, stateName: lga.stateName, isDemoData: false } : null,
+          state: lga ? { id: lga.stateId, name: lga.stateName, code: idx.state(lga.stateId)?.code ?? null, isDemoData: false } : null,
+          lga: lga ? { id: lga.id, name: lga.name, stateId: lga.stateId, stateName: lga.stateName, isDemoData: false } : null,
           community: lc,
         },
         coordinates,
@@ -253,7 +259,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const communityId = req.query.communityId?.trim() || undefined;
     if (communityId && !uuid.safeParse(communityId).success) return { data: [] };
     const rows = await db.listPublicReports({ communityId, limit: 500 });
-    const visible = rows.filter((r) => r.status === "verified");
+    const visible = rows.filter((r) => r.status === "VERIFIED");
     const ids = [...new Set(visible.map((r) => r.community_id))];
     const communities = ids.length ? await db.listCommunities({ ids }) : [];
     const byId = new Map(communities.map((c) => [c.id, c]));
@@ -307,11 +313,19 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const body = reportSchema.parse(req.body);
     await activeCommunity(body.communityId);
     if (!allowSubmission(user.id)) throw new HttpError(429, "You have submitted several reports recently. Please wait before sending another.");
-    const row = await db.insertReport({
-      reporter_id: user.id, community_id: body.communityId, category: body.category, description: body.description,
+    const report = {
+      reporter_id: user.id, community_id: body.communityId, category: CATEGORY_TO_DB[body.category], description: body.description,
       latitude: body.latitude ?? null, longitude: body.longitude ?? null,
-    });
-    return reply.status(201).send({ data: ownReport(row) });
+    };
+    // reference_code has no database default; retry on the rare duplicate (unique violation 23505).
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const row = await db.insertReport(report, newReferenceCode(now()));
+        return reply.status(201).send({ data: ownReport(row) });
+      } catch (err) {
+        if (!(err instanceof DbError && err.code === "23505" && attempt < 4)) throw err;
+      }
+    }
   });
 
   app.get("/reports/mine", async (req) => {
@@ -325,11 +339,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const body = reviewSchema.parse(req.body);
     const report = await db.getReport(req.params.id);
     if (!report) throw new HttpError(404, "Report not found.");
-    if (report.status !== "pending") throw new HttpError(409, `This report has already been ${report.status}.`);
-    const updated = await db.reviewReport(report.id, {
-      status: body.decision, reviewed_by: admin.id, reviewed_at: now().toISOString(), admin_note: body.reviewNote ?? null,
-    });
+    if (report.status !== "PENDING") throw new HttpError(409, `This report is already ${statusFromDb(report.status).replace("_", " ")}.`);
+    const newStatus = STATUS_TO_DB[body.decision] as "VERIFIED" | "REJECTED";
+    const note = body.reviewNote ?? null;
+    const updated = await db.reviewReport(report.id, { status: newStatus, reviewed_by: admin.id, reviewed_at: now().toISOString(), admin_note: note });
     if (!updated) throw new HttpError(409, "This report was reviewed by someone else. Refresh to see its status.");
+    await db
+      .insertReportHistory({ report_id: report.id, previous_status: "PENDING", new_status: newStatus, changed_by: admin.id, note })
+      .catch((err: unknown) => req.log.error({ err, report: report.id }, "could not write report_status_history"));
     // Reassess the community straight away with the new evidence (does not block the response).
     const community = await db.getCommunity(updated.community_id);
     let reassessment: "started" | "skipped" = "skipped";

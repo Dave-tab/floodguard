@@ -8,7 +8,6 @@ import { AssessmentService, type Explainer } from "./assessments/service.ts";
 import { FileStore } from "./assessments/store.ts";
 import { loadConfig } from "./config.ts";
 import { SupabaseAuth, SupabaseDb, createSupabase } from "./db/repo.ts";
-import type { OptionalRiskColumn } from "./db/schema.ts";
 import { LocationService } from "./locations.ts";
 import { Scheduler } from "./scheduler.ts";
 
@@ -27,23 +26,13 @@ const budget = new OpenMeteoBudget(cfg.openMeteoDailyBudget, store);
 const climatology = new ClimatologyService(store, budget, { apiKey: cfg.openMeteoApiKey });
 const locations = new LocationService(db);
 
-// Detected once: which proposed optional columns exist in risk_assessments.
-let optionalCols: Promise<OptionalRiskColumn[]> | null = null;
-const optionalRiskColumns = () => {
-  optionalCols ??= db.probeOptionalRiskColumns().then((cols) => {
-    log.info({ optionalRiskColumns: cols }, "risk_assessments optional columns detected");
-    return cols;
-  }).catch(() => []);
-  return optionalCols;
-};
-
 const vultrKey = cfg.vultrApiKey;
 const explain: Explainer | null = vultrKey
   ? (a) => explainAssessment(a, { apiKey: vultrKey, model: cfg.vultrModel ?? DEFAULT_VULTR_MODEL })
   : null;
 
 const assessments = new AssessmentService({
-  db, store, climatology, budget, explain, openMeteoApiKey: cfg.openMeteoApiKey, log, optionalRiskColumns,
+  db, store, climatology, budget, explain, openMeteoApiKey: cfg.openMeteoApiKey, log,
 });
 
 const app = await buildApp({ db, auth: new SupabaseAuth(sb), locations, assessments, corsOrigins: cfg.corsOrigins, logger: true });
@@ -52,7 +41,6 @@ const scheduler = cfg.enableScheduler ? new Scheduler(db, locations, assessments
 
 await app.listen({ port: cfg.port, host: cfg.host });
 log.info({ port: cfg.port, scheduler: !!scheduler, ai: !!explain, cors: cfg.corsOrigins.length ? cfg.corsOrigins : "any" }, "FloodGuard API started");
-void optionalRiskColumns();
 scheduler?.start();
 
 const shutdown = async (signal: string) => {

@@ -1,80 +1,67 @@
-// Single place for Supabase table and column names. The live schema was probed on
-// 2026-11-15 with the publishable key (tables empty, column types not visible). If a name is
-// wrong, fix it here only.
+// Supabase table and column names, and row types. Confirmed from the live database's
+// PostgREST OpenAPI description on 2026-11-15 (secret key). Database enum values are
+// UPPERCASE; the API and frontend use the approved lowercase values. All conversion between
+// the two lives in ../mapping.ts.
 
 export const T = {
   states: "states",
   lgas: "lgas",
-  wards: "wards",
   communities: "communities",
   reports: "hazard_reports",
+  reportHistory: "report_status_history",
   risk: "risk_assessments",
-  alerts: "alerts",
   profiles: "profiles",
 } as const;
 
 export const COLS = {
-  states: "id,name,code",
-  lgas: "id,name,state_id,code",
-  communities: "id,name,lga_id,ward_id,latitude,longitude,is_active,verification_status,community_type,created_at,updated_at",
+  states: "id,name,code,source_record_id,is_active",
+  lgas: "id,name,state_id,code,source_record_id,is_active",
+  communities:
+    "id,name,lga_id,ward_id,latitude,longitude,is_active,verification_status,community_type,created_at,updated_at",
   reports:
-    "id,reporter_id,community_id,category,description,latitude,longitude,status,photo_path,reviewed_by,reviewed_at,admin_note,created_at,updated_at",
-  /** Public view of a report: never includes reporter_id or reviewer identity. */
+    "id,reference_code,reporter_id,community_id,category,description,latitude,longitude,status,photo_path,reviewed_by,reviewed_at,admin_note,created_at,updated_at",
+  /** Public view of a report: never includes reporter_id, reviewer or admin note. */
   reportsPublic: "id,community_id,category,description,latitude,longitude,status,reviewed_at,created_at",
-  risk: "id,community_id,risk_level,score,confidence,explanation,explanation_source,assessed_at,data_freshness,recommended_actions,created_at",
-  alerts: "id,community_id,severity,title,message,alert_type,expires_at,created_by,created_at",
+  risk:
+    "id,community_id,risk_level,score,confidence,explanation,explanation_source,explanation_provider,explanation_generated_at,recommended_actions,data_available,limitations,inputs_used,inputs_missing,input_summary,data_freshness,methodology_version,assessed_at,created_at",
 } as const;
 
-/** Columns proposed in supabase/proposed_additive_columns.sql. Written only if present. */
-export const OPTIONAL_RISK_COLUMNS = [
-  "summary",
-  "status",
-  "valid_until",
-  "next_review_at",
-  "factors",
-  "missing_inputs",
-  "inputs_json",
-  "method_version",
-  "confidence_score",
-  "provider",
-] as const;
-export type OptionalRiskColumn = (typeof OPTIONAL_RISK_COLUMNS)[number];
+// ---- Database enums (exact values) ----
+export const DB_HAZARD_CATEGORIES = ["FLOODING", "RISING_WATER", "BLOCKED_DRAINAGE", "FLOODED_ROAD", "DRAINAGE_DAMAGE", "EROSION", "OTHER"] as const;
+export type DbHazardCategory = (typeof DB_HAZARD_CATEGORIES)[number];
+export type DbReportStatus = "PENDING" | "VERIFIED" | "IN_PROGRESS" | "RESOLVED" | "REJECTED";
+/** Live enum has no SEVERE (see supabase/proposed_severe_level.sql); it is attempted, never relabelled. */
+export type DbRiskLevel = "LOW" | "MODERATE" | "HIGH" | "SEVERE" | "CRITICAL" | "UNAVAILABLE";
+export type DbConfidence = "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT";
+export type DbExplanationSource = "AI" | "FALLBACK" | "NONE";
+export type DbVerificationStatus = "UNVERIFIED" | "PENDING_REVIEW" | "VERIFIED" | "REJECTED";
+export type DbRole = "RESIDENT" | "ADMIN";
 
-export const HAZARD_CATEGORIES = [
-  "flooded_road",
-  "rising_water_level",
-  "blocked_drainage",
-  "overflowing_waterway",
-  "damaged_drainage",
-  "other",
-] as const;
-export type HazardCategory = (typeof HAZARD_CATEGORIES)[number];
-export type ReportStatus = "pending" | "verified" | "rejected";
-
-export interface StateRow { id: string; name: string; code: string | null }
-export interface LgaRow { id: string; name: string; state_id: string; code: string | null }
+export interface StateRow { id: string; name: string; code: string | null; source_record_id?: string | null; is_active?: boolean }
+export interface LgaRow { id: string; name: string; state_id: string; code: string | null; source_record_id?: string | null; is_active?: boolean }
 export interface CommunityRow {
   id: string;
   name: string;
-  lga_id: string | null;
+  lga_id: string;
   ward_id: string | null;
   latitude: number | null;
   longitude: number | null;
   is_active: boolean;
-  verification_status: string | null;
+  verification_status: DbVerificationStatus | string | null;
   community_type: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
 export interface ReportRow {
   id: string;
+  reference_code: string;
   reporter_id: string;
   community_id: string;
-  category: HazardCategory;
+  category: DbHazardCategory;
   description: string;
   latitude: number | null;
   longitude: number | null;
-  status: ReportStatus;
+  status: DbReportStatus;
   photo_path: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
@@ -86,27 +73,32 @@ export type PublicReportRow = Pick<
   ReportRow,
   "id" | "community_id" | "category" | "description" | "latitude" | "longitude" | "status" | "reviewed_at" | "created_at"
 >;
+export interface ReportHistoryInsert {
+  report_id: string;
+  previous_status: DbReportStatus | null;
+  new_status: DbReportStatus;
+  changed_by: string | null;
+  note: string | null;
+}
 export interface RiskRow {
   id: string;
   community_id: string;
-  risk_level: string | null;
+  risk_level: DbRiskLevel | string;
   score: number | null;
-  confidence: string | null;
+  confidence: DbConfidence | string;
   explanation: string | null;
-  explanation_source: string | null;
+  explanation_source: DbExplanationSource | string;
+  explanation_provider: string | null;
+  explanation_generated_at: string | null;
+  recommended_actions: string[];
+  data_available: boolean;
+  limitations: string[];
+  inputs_used: string[];
+  inputs_missing: string[];
+  input_summary: Record<string, unknown>;
+  data_freshness: Record<string, unknown>;
+  methodology_version: string | null;
   assessed_at: string;
-  data_freshness: unknown;
-  recommended_actions: unknown;
   created_at?: string | null;
 }
-export interface AlertRow {
-  id: string;
-  community_id: string | null;
-  severity: string | null;
-  title: string;
-  message: string;
-  alert_type: string | null;
-  expires_at: string | null;
-  created_by: string | null;
-  created_at: string;
-}
+export type RiskInsert = Omit<RiskRow, "id" | "created_at">;

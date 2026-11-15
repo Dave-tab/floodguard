@@ -74,6 +74,8 @@ export class FakeDb implements Db {
   names = new Map<string, string | null>([[ids.resident, null], [ids.admin, "Ada Admin"]]);
   alerts: (AlertRow & { created_by: string })[] = [];
   profileInserts: { id: string; full_name: string | null }[] = [];
+  profileUpdates: { id: string; preferred_community_id: string | null }[] = [];
+  preferred = new Map<string, string | null>();
   /** Access tokens accepted for user-scoped inserts (stand-in for auth.uid()). */
   tokenUsers = new Map<string, string>([["resident-token", ids.resident], ["admin-token", ids.admin], ["new-user-token", ids.newUser]]);
   /** Simulates the server running without SUPABASE_PUBLISHABLE_KEY. */
@@ -128,7 +130,13 @@ export class FakeDb implements Db {
   async countCommunities(activeOnly: boolean) { return this.communities.filter((c) => !activeOnly || c.is_active).length; }
   async getProfileRole(userId: string) { return this.roles.get(userId) ?? null; }
   async getProfile(userId: string) {
-    return this.roles.has(userId) ? { id: userId, full_name: this.names.get(userId) ?? null, role: this.roles.get(userId)! } : null;
+    return this.roles.has(userId)
+      ? { id: userId, full_name: this.names.get(userId) ?? null, role: this.roles.get(userId)!, preferred_community_id: this.preferred.get(userId) ?? null }
+      : null;
+  }
+  async setPreferredCommunity(userId: string, communityId: string | null) {
+    this.profileUpdates.push({ id: userId, preferred_community_id: communityId });
+    this.preferred.set(userId, communityId);
   }
   async ensureProfile(userId: string, fullName: string | null) {
     if (this.roles.has(userId)) return;
@@ -161,7 +169,7 @@ export class FakeDb implements Db {
 
 export const fakeAuth: AuthVerifier = {
   async verify(token: string) {
-    if (token === "resident-token") return { id: ids.resident, fullName: "Rita Resident" };
+    if (token === "resident-token") return { id: ids.resident, fullName: "Rita Resident", email: "rita@example.test" };
     if (token === "admin-token") return { id: ids.admin, fullName: "Ada Admin" };
     if (token === "new-user-token") return { id: ids.newUser, fullName: "Nora New" };
     return null;

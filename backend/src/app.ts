@@ -59,6 +59,8 @@ export const alertSchema = z
   })
   .strict();
 
+export const mePatchSchema = z.object({ preferredCommunityId: uuid.nullable() }).strict();
+
 const ADMIN_STATUS_FILTER: Record<string, DbReportStatus> = {
   pending: "PENDING", verified: "VERIFIED", rejected: "REJECTED", in_progress: "IN_PROGRESS", resolved: "RESOLVED",
 };
@@ -142,7 +144,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   await app.register(cors, {
     origin: deps.corsOrigins?.length ? deps.corsOrigins : true,
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "OPTIONS"],
     allowedHeaders: ["Authorization", "Content-Type", "Accept"],
   });
 
@@ -213,7 +215,28 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // A database trigger normally creates the profile at sign-up; this is only a fallback.
     await db.ensureProfile(user.id, user.fullName ?? null);
     const profile = await db.getProfile(user.id);
-    return { data: { id: user.id, role: roleFromDb(profile?.role ?? null), fullName: profile?.full_name ?? user.fullName ?? null } };
+    return {
+      data: {
+        id: user.id,
+        role: roleFromDb(profile?.role ?? null),
+        fullName: profile?.full_name ?? user.fullName ?? null,
+        email: user.email ?? null,
+        preferredCommunityId: profile?.preferred_community_id ?? null,
+      },
+    };
+  });
+
+  // Only the caller's own preferred community can be changed; any other field is rejected.
+  app.patch("/me", async (req) => {
+    const user = await requireUser(req);
+    const body = mePatchSchema.parse(req.body ?? {});
+    if (body.preferredCommunityId) {
+      const c = await db.getCommunity(body.preferredCommunityId);
+      if (!c?.is_active) throw new HttpError(400, "Choose an active community.");
+    }
+    await db.ensureProfile(user.id, user.fullName ?? null);
+    await db.setPreferredCommunity(user.id, body.preferredCommunityId);
+    return { data: { preferredCommunityId: body.preferredCommunityId } };
   });
 
   // ---- Public alerts (FloodGuard notices, not official warnings) ----

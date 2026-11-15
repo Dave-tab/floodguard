@@ -207,6 +207,47 @@ describe("signed-in user", () => {
     expect(db.profileInserts).toHaveLength(0);
     expect(db.roles.get(ids.admin)).toBe("ADMIN");
   });
+  it("returns the caller's own email and preferred community", async () => {
+    const { app, db } = await setup();
+    db.preferred.set(ids.resident, ids.ikorodu);
+    const me = (await app.inject({ method: "GET", url: "/me", headers: auth("resident-token") })).json().data;
+    expect(me).toMatchObject({ id: ids.resident, email: "rita@example.test", preferredCommunityId: ids.ikorodu });
+  });
+});
+
+describe("PATCH /me (preferred community)", () => {
+  const patch = (payload: unknown, token?: string) => ({ method: "PATCH" as const, url: "/me", payload: payload as object, headers: token ? auth(token) : {} });
+  it("requires sign-in", async () => {
+    const { app, db } = await setup();
+    expect((await app.inject(patch({ preferredCommunityId: ids.ikorodu }))).statusCode).toBe(401);
+    expect(db.profileUpdates).toHaveLength(0);
+  });
+  it("sets only the caller's own preferred community", async () => {
+    const { app, db } = await setup();
+    const res = await app.inject(patch({ preferredCommunityId: ids.ikorodu }, "resident-token"));
+    expect(res.statusCode).toBe(200);
+    expect(db.profileUpdates).toEqual([{ id: ids.resident, preferred_community_id: ids.ikorodu }]);
+    expect(db.roles.get(ids.resident)).toBe("RESIDENT");
+  });
+  it("clears it with null", async () => {
+    const { app, db } = await setup();
+    db.preferred.set(ids.resident, ids.ikorodu);
+    expect((await app.inject(patch({ preferredCommunityId: null }, "resident-token"))).statusCode).toBe(200);
+    expect(db.preferred.get(ids.resident)).toBeNull();
+  });
+  it.each<[Record<string, unknown>, string]>([
+    [{ preferredCommunityId: ids.inactive }, "inactive community"],
+    [{ preferredCommunityId: "99999999-9999-4999-8999-999999999999" }, "unknown community"],
+    [{ preferredCommunityId: "not-a-uuid" }, "bad id"],
+    [{ preferredCommunityId: ids.ikorodu, role: "ADMIN" }, "role field"],
+    [{ role: "ADMIN" }, "role only"],
+    [{}, "missing field"],
+  ])("rejects %j (%s) and writes nothing", async (body) => {
+    const { app, db } = await setup();
+    expect((await app.inject(patch(body, "resident-token"))).statusCode).toBe(400);
+    expect(db.profileUpdates).toHaveLength(0);
+    expect(db.roles.get(ids.resident)).toBe("RESIDENT");
+  });
 });
 
 describe("admin endpoints", () => {

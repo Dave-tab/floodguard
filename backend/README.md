@@ -17,7 +17,8 @@ All responses are JSON. Collections use `{ "data": [...] }`, and errors use `{ "
 | Method | Path | Access | Notes |
 | --- | --- | --- | --- |
 | GET | `/health` | public | Liveness |
-| GET | `/me` | signed in | `{id, role: "resident" \| "admin", fullName}` from `profiles` (role is lowercase; the database stores `RESIDENT`/`ADMIN`) |
+| GET | `/me` | signed in | `{id, role: "resident" \| "admin", fullName, email, preferredCommunityId}` for the caller only (role is lowercase; the database stores `RESIDENT`/`ADMIN`) |
+| PATCH | `/me` | signed in | `{preferredCommunityId: uuid \| null}` only (any other field, e.g. `role`, is rejected with 400). The community must be active. Writes only `profiles.preferred_community_id` for the caller, with the secret key (users have no UPDATE grant) |
 | GET | `/alerts?communityId=` | public | Unexpired alerts: that community's plus platform-wide ones, newest first. Never includes `created_by`. Each has `source: "FloodGuard administrator notice (not an official government warning)"` |
 | GET | `/locations/states` | public | Database `states` rows when the table has data; until then the bundled dataset (37 states + FCT, ids like `NG025`). `source` says which |
 | GET | `/locations/states/:stateId/lgas` | public | LGAs of a state, same source rule. Accepts a database uuid or a dataset id |

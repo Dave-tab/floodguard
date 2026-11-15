@@ -7,6 +7,8 @@ export interface AppConfig {
   host: string;
   supabaseUrl: string;
   supabaseSecretKey: string;
+  /** Needed only to insert reports as the signed-in user (database trigger requires auth.uid()). */
+  supabasePublishableKey: string | null;
   vultrApiKey: string | null;
   vultrModel: string | null;
   openMeteoApiKey: string | null;
@@ -29,6 +31,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: blank(env.HOST) ?? "127.0.0.1",
     supabaseUrl: supabaseUrl!,
     supabaseSecretKey: supabaseSecretKey!,
+    supabasePublishableKey: blank(env.SUPABASE_PUBLISHABLE_KEY),
     vultrApiKey: blank(env.VULTR_INFERENCE_API_KEY),
     vultrModel: blank(env.VULTR_INFERENCE_MODEL),
     openMeteoApiKey: blank(env.OPEN_METEO_API_KEY),

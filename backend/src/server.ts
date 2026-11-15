@@ -20,7 +20,7 @@ const log = {
 
 const cfg = loadConfig();
 const sb = createSupabase(cfg.supabaseUrl, cfg.supabaseSecretKey);
-const db = new SupabaseDb(sb);
+const db = new SupabaseDb(sb, cfg.supabasePublishableKey ? { url: cfg.supabaseUrl, publishableKey: cfg.supabasePublishableKey } : null);
 const store = new FileStore(join(cfg.cacheDir, "store"));
 const budget = new OpenMeteoBudget(cfg.openMeteoDailyBudget, store);
 const climatology = new ClimatologyService(store, budget, { apiKey: cfg.openMeteoApiKey });
@@ -40,7 +40,7 @@ const app = await buildApp({ db, auth: new SupabaseAuth(sb), locations, assessme
 const scheduler = cfg.enableScheduler ? new Scheduler(db, locations, assessments, { log }) : null;
 
 await app.listen({ port: cfg.port, host: cfg.host });
-log.info({ port: cfg.port, scheduler: !!scheduler, ai: !!explain, cors: cfg.corsOrigins.length ? cfg.corsOrigins : "any" }, "FloodGuard API started");
+log.info({ port: cfg.port, scheduler: !!scheduler, ai: !!explain, reports: !!cfg.supabasePublishableKey, cors: cfg.corsOrigins.length ? cfg.corsOrigins : "any" }, "FloodGuard API started");
 scheduler?.start();
 
 const shutdown = async (signal: string) => {

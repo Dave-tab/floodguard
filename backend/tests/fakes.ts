@@ -9,8 +9,8 @@ import { OpenMeteoBudget } from "../src/assessments/budget.ts";
 import { ClimatologyService } from "../src/assessments/climatology.ts";
 import { AssessmentService, type Explainer } from "../src/assessments/service.ts";
 import { MemoryStore } from "../src/assessments/store.ts";
-import { DbError, type AuthVerifier, type CommunityFilter, type Db, type NewReport, type ReportFilter, type ReviewPatch } from "../src/db/repo.ts";
-import type { CommunityRow, DbReportStatus, LgaRow, ReportHistoryInsert, ReportRow, RiskInsert, RiskRow, StateRow } from "../src/db/schema.ts";
+import { DbError, NO_USER_CLIENT, type AuthVerifier, type CommunityFilter, type Db, type NewReport, type ReportFilter, type ReviewPatch } from "../src/db/repo.ts";
+import type { AlertInsert, AlertRow, CommunityRow, DbReportStatus, LgaRow, ReportHistoryInsert, ReportRow, RiskInsert, RiskRow, StateRow } from "../src/db/schema.ts";
 import { LocationService, type AdminDataset } from "../src/locations.ts";
 
 export const NOW = new Date("2026-11-15T12:00:00.000Z");
@@ -19,6 +19,7 @@ export const ids = {
   inactive: "22222222-2222-4222-8222-222222222222",
   noCoords: "33333333-3333-4333-8333-333333333333",
   resident: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  newUser: "ffffffff-ffff-4fff-8fff-ffffffffffff",
   admin: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   lagos: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   ikoroduLga: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -49,6 +50,12 @@ const RISK_NOT_NULL: (keyof RiskInsert)[] = [
   "inputs_missing", "input_summary", "data_freshness", "explanation_source", "assessed_at",
 ];
 
+function withoutAuthor(a: AlertRow & { created_by: string }): AlertRow {
+  const pub: Partial<AlertRow & { created_by: string }> = { ...a };
+  delete pub.created_by;
+  return pub as AlertRow;
+}
+
 export class FakeDb implements Db {
   states: StateRow[] = [{ id: ids.lagos, name: "Lagos", code: null, source_record_id: null }];
   lgas: LgaRow[] = [
@@ -64,8 +71,13 @@ export class FakeDb implements Db {
   history: ReportHistoryInsert[] = [];
   risk: RiskRow[] = [];
   roles = new Map<string, string>([[ids.resident, "RESIDENT"], [ids.admin, "ADMIN"]]);
-  /** Makes the next N inserts fail as duplicate reference codes. */
-  duplicateCodes = 0;
+  names = new Map<string, string | null>([[ids.resident, null], [ids.admin, "Ada Admin"]]);
+  alerts: (AlertRow & { created_by: string })[] = [];
+  profileInserts: { id: string; full_name: string | null }[] = [];
+  /** Access tokens accepted for user-scoped inserts (stand-in for auth.uid()). */
+  tokenUsers = new Map<string, string>([["resident-token", ids.resident], ["admin-token", ids.admin], ["new-user-token", ids.newUser]]);
+  /** Simulates the server running without SUPABASE_PUBLISHABLE_KEY. */
+  userClientConfigured = true;
 
   addReport(status: DbReportStatus, o: Partial<ReportRow> = {}): ReportRow {
     const r: ReportRow = {
@@ -97,12 +109,14 @@ export class FakeDb implements Db {
     }));
   }
   async getReport(id: string) { return this.reports.find((r) => r.id === id) ?? null; }
-  async insertReport(n: NewReport, referenceCode: string) {
-    if (this.duplicateCodes > 0) {
-      this.duplicateCodes--;
-      throw new DbError("insert report", "23505", "duplicate key value violates unique constraint");
-    }
-    return this.addReport("PENDING", { ...n, reference_code: referenceCode, created_at: NOW.toISOString() });
+  async insertReport(n: NewReport, accessToken: string) {
+    if (!this.userClientConfigured) throw new DbError("insert report", NO_USER_CLIENT, "SUPABASE_PUBLISHABLE_KEY is not configured");
+    const uid = this.tokenUsers.get(accessToken);
+    // Live trigger: "Authentication required" when auth.uid() is null.
+    if (!uid) throw new DbError("insert report", "42501", "Authentication required");
+    if ("reporter_id" in n || "reference_code" in n || "status" in n) throw new Error("client must not send trigger-owned columns");
+    const code = `FG-${randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`; // DB-generated format
+    return this.addReport("PENDING", { ...n, reporter_id: uid, reference_code: code, created_at: NOW.toISOString() });
   }
   async reviewReport(id: string, p: ReviewPatch) {
     const r = this.reports.find((x) => x.id === id && x.status === "PENDING");
@@ -113,6 +127,27 @@ export class FakeDb implements Db {
   async insertReportHistory(h: ReportHistoryInsert) { this.history.push(h); }
   async countCommunities(activeOnly: boolean) { return this.communities.filter((c) => !activeOnly || c.is_active).length; }
   async getProfileRole(userId: string) { return this.roles.get(userId) ?? null; }
+  async getProfile(userId: string) {
+    return this.roles.has(userId) ? { id: userId, full_name: this.names.get(userId) ?? null, role: this.roles.get(userId)! } : null;
+  }
+  async ensureProfile(userId: string, fullName: string | null) {
+    if (this.roles.has(userId)) return;
+    this.profileInserts.push({ id: userId, full_name: fullName });
+    this.roles.set(userId, "RESIDENT"); // database default
+    this.names.set(userId, fullName);
+  }
+  async countReports(status?: DbReportStatus) { return this.reports.filter((r) => !status || r.status === status).length; }
+  async listActiveAlerts(f: { at: string; communityId?: string }) {
+    return this.alerts
+      .filter((a) => (!a.expires_at || a.expires_at > f.at) && (!f.communityId || a.community_id === null || a.community_id === f.communityId))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((a) => withoutAuthor(a));
+  }
+  async insertAlert(a: AlertInsert) {
+    const row = { ...a, id: randomUUID(), created_at: NOW.toISOString(), updated_at: null };
+    this.alerts.push(row);
+    return withoutAuthor(row);
+  }
   async insertRiskAssessment(row: RiskInsert) {
     if (!RISK_LEVELS.includes(row.risk_level)) throw new DbError("insert risk assessment", "22P02", `invalid input value for enum risk_level: "${row.risk_level}"`);
     const missing = RISK_NOT_NULL.filter((k) => row[k] === null || row[k] === undefined);
@@ -126,8 +161,9 @@ export class FakeDb implements Db {
 
 export const fakeAuth: AuthVerifier = {
   async verify(token: string) {
-    if (token === "resident-token") return { id: ids.resident };
-    if (token === "admin-token") return { id: ids.admin };
+    if (token === "resident-token") return { id: ids.resident, fullName: "Rita Resident" };
+    if (token === "admin-token") return { id: ids.admin, fullName: "Ada Admin" };
+    if (token === "new-user-token") return { id: ids.newUser, fullName: "Nora New" };
     return null;
   },
 };

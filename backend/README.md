@@ -17,6 +17,8 @@ All responses are JSON. Collections use `{ "data": [...] }`, and errors use `{ "
 | Method | Path | Access | Notes |
 | --- | --- | --- | --- |
 | GET | `/health` | public | Liveness |
+| GET | `/me` | signed in | `{id, role: "resident" \| "admin", fullName}` from `profiles` (role is lowercase; the database stores `RESIDENT`/`ADMIN`) |
+| GET | `/alerts?communityId=` | public | Unexpired alerts: that community's plus platform-wide ones, newest first. Never includes `created_by`. Each has `source: "FloodGuard administrator notice (not an official government warning)"` |
 | GET | `/locations/states` | public | Database `states` rows when the table has data; until then the bundled dataset (37 states + FCT, ids like `NG025`). `source` says which |
 | GET | `/locations/states/:stateId/lgas` | public | LGAs of a state, same source rule. Accepts a database uuid or a dataset id |
 | GET | `/locations/lgas/:lgaId/communities` | public | Active communities in the LGA (`LocationCommunity[]`). Accepts the database uuid or the frontend's dataset id (`NG025012`), matched to `lgas.code` / `source_record_id`, then by name within the state |
@@ -30,10 +32,14 @@ All responses are JSON. Collections use `{ "data": [...] }`, and errors use `{ "
 | GET | `/safety/guidelines` | public | The team's guidance text (same as the frontend) |
 | GET | `/safety/hotlines` | public | Always `[]` until a verified, sourced list exists |
 | GET | `/platform/impact` | public | Real counts where known, otherwise `null` |
-| POST | `/reports` | signed in | `{communityId, category, description, latitude?, longitude?}` with one of the six approved categories. Stored as `PENDING` with a generated `reference_code` (`FG-YYMMDD-XXXXX`, returned as `referenceCode`); reporter comes from the token. 10 per user per hour |
+| POST | `/reports` | signed in | `{communityId, category, description, latitude?, longitude?}` with one of the six approved categories. **Inserted as the signed-in user** (their token plus `SUPABASE_PUBLISHABLE_KEY`): database triggers set `reporter_id = auth.uid()`, `reference_code` (e.g. `FG-F4CDCA7901`, returned as `referenceCode`) and `PENDING`. 503 if the publishable key is not configured. 10 per user per hour |
 | GET | `/reports/mine` | signed in | The caller's own reports. `status` is `pending`/`verified`/`rejected`, or the raw `in_progress`/`resolved` if someone set those in the database |
 | POST | `/admin/reports/:id/review` | admin | `{decision: "verified" \| "rejected", reviewNote?}`. Only from `PENDING`. Sets `reviewed_by`, `reviewed_at`, `admin_note`, writes a `report_status_history` row, then reassesses the community |
 | POST | `/admin/assess/:communityId` | admin | Run an assessment now |
+| GET | `/admin/summary` | admin | Active communities, elevated (high/severe/critical) current assessments, report counts, 6 recent reports, 5 recent assessments |
+| GET | `/admin/reports?status=&communityId=` | admin | All reports (any status; filter with lowercase `pending`/`verified`/`rejected`/`in_progress`/`resolved`) with community, LGA, state, `referenceCode`, `reporterId`, `adminNote`. No emails or contact details |
+| GET | `/admin/communities` | admin | Active communities with their latest assessment (cache, else stored row). Never starts a new run |
+| POST | `/admin/alerts` | admin | `{title, message, severity: info\|low\|moderate\|high\|critical, alertType: flood_warning\|weather_notice\|safety_advisory\|community_notice\|other, communityId?, expiresAt?}`. `created_by` is the admin. These are **FloodGuard notices, not official government warnings**, and are not used as risk-engine evidence |
 
 **Authentication:** send the Supabase access token as `Authorization: Bearer <token>`
 (`supabase.auth.getSession()` in the frontend). The server verifies it with Supabase. Admin
@@ -84,6 +90,7 @@ means `profiles.role = 'ADMIN'`.
 | --- | --- | --- |
 | `SUPABASE_URL` | yes | `https://<project>.supabase.co` |
 | `SUPABASE_SECRET_KEY` | yes | Supabase **secret / service_role** key. Server only, never in the frontend or git |
+| `SUPABASE_PUBLISHABLE_KEY` | for reports | The public publishable key. Used only to insert reports **as the signed-in user**, because a trigger on `hazard_reports` requires `auth.uid()` (the secret key gets `42501 Authentication required`) |
 | `PORT` | no | Default 8080 (Nginx proxies to it) |
 | `VULTR_INFERENCE_API_KEY` | no | Enables AI explanations |
 | `VULTR_INFERENCE_MODEL` | no | Default `deepseek-v4.1-flash-1017` |
@@ -160,8 +167,12 @@ contract values (lowercase, approved) and the database enums (UPPERCASE) is in
 
 **Other facts:**
 
-- `hazard_reports.reference_code` is required and has no default; the API generates it and
-  retries if it hits a duplicate.
+- Report inserts must run as the user: a trigger on `hazard_reports` requires `auth.uid()` and
+  fills `reporter_id`, `reference_code` and `PENDING`. Users cannot UPDATE reports (no grant), so
+  admin review uses the secret key. `report_status_history` is written by the API, not the database.
+- A trigger creates `profiles` (role `RESIDENT`, `full_name` empty) at sign-up; the API also
+  creates a missing profile as a fallback and never writes `role`.
+- Supabase Auth has email confirmation on: new users must confirm by email before signing in.
 - Reviews also write `report_status_history`. If that insert fails, the review still stands
   and the error is logged.
 - `states`, `lgas` and `communities` were empty. Nothing can be assessed until active

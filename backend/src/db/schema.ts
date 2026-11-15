@@ -11,6 +11,7 @@ export const T = {
   reportHistory: "report_status_history",
   risk: "risk_assessments",
   profiles: "profiles",
+  alerts: "alerts",
 } as const;
 
 export const COLS = {
@@ -22,6 +23,8 @@ export const COLS = {
     "id,reference_code,reporter_id,community_id,category,description,latitude,longitude,status,photo_path,reviewed_by,reviewed_at,admin_note,created_at,updated_at",
   /** Public view of a report: never includes reporter_id, reviewer or admin note. */
   reportsPublic: "id,community_id,category,description,latitude,longitude,status,reviewed_at,created_at",
+  /** Public alert columns: created_by is never exposed. */
+  alerts: "id,community_id,severity,alert_type,title,message,expires_at,created_at,updated_at",
   risk:
     "id,community_id,risk_level,score,confidence,explanation,explanation_source,explanation_provider,explanation_generated_at,recommended_actions,data_available,limitations,inputs_used,inputs_missing,input_summary,data_freshness,methodology_version,assessed_at,created_at",
 } as const;
@@ -36,6 +39,8 @@ export type DbConfidence = "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT";
 export type DbExplanationSource = "AI" | "FALLBACK" | "NONE";
 export type DbVerificationStatus = "UNVERIFIED" | "PENDING_REVIEW" | "VERIFIED" | "REJECTED";
 export type DbRole = "RESIDENT" | "ADMIN";
+export type DbAlertSeverity = "INFO" | "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
+export type DbAlertType = "FLOOD_WARNING" | "WEATHER_NOTICE" | "SAFETY_ADVISORY" | "COMMUNITY_NOTICE" | "OTHER";
 
 export interface StateRow { id: string; name: string; code: string | null; source_record_id?: string | null; is_active?: boolean }
 export interface LgaRow { id: string; name: string; state_id: string; code: string | null; source_record_id?: string | null; is_active?: boolean }
@@ -102,3 +107,16 @@ export interface RiskRow {
   created_at?: string | null;
 }
 export type RiskInsert = Omit<RiskRow, "id" | "created_at">;
+export interface ProfileRow { id: string; full_name: string | null; role: DbRole | string }
+export interface AlertRow {
+  id: string;
+  community_id: string | null;
+  severity: DbAlertSeverity;
+  alert_type: DbAlertType;
+  title: string;
+  message: string;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+export type AlertInsert = Pick<AlertRow, "community_id" | "severity" | "alert_type" | "title" | "message" | "expires_at"> & { created_by: string };

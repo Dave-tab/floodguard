@@ -1,14 +1,16 @@
 // Data access. Routes and services depend on the Db interface only, so tests use an
 // in-memory implementation and every Supabase query lives in this file. Values here are the
 // database's own (UPPERCASE enums); conversion happens in ../mapping.ts.
-import { randomInt } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   COLS,
   T,
+  type AlertInsert,
+  type AlertRow,
   type CommunityRow,
   type DbReportStatus,
   type LgaRow,
+  type ProfileRow,
   type PublicReportRow,
   type ReportHistoryInsert,
   type ReportRow,
@@ -34,7 +36,8 @@ export interface ReportFilter {
   limit?: number;
 }
 
-export type NewReport = Pick<ReportRow, "reporter_id" | "community_id" | "category" | "description" | "latitude" | "longitude">;
+/** What the client may set. reporter_id, reference_code and status are set by database triggers (auth.uid()). */
+export type NewReport = Pick<ReportRow, "community_id" | "category" | "description" | "latitude" | "longitude">;
 export interface ReviewPatch { status: "VERIFIED" | "REJECTED"; reviewed_by: string; reviewed_at: string; admin_note: string | null }
 
 /** Error carrying the Postgres / PostgREST code (e.g. 22P02 invalid enum, 23505 unique violation). */
@@ -54,20 +57,32 @@ export interface Db {
   /** VERIFIED reports with public-safe columns only. */
   listPublicReports(f: { communityId?: string; limit?: number }): Promise<PublicReportRow[]>;
   getReport(id: string): Promise<ReportRow | null>;
-  /** Inserts with status PENDING and the given reference code. Throws DbError (23505 on duplicate code). */
-  insertReport(r: NewReport, referenceCode: string): Promise<ReportRow>;
+  /**
+   * Inserts a report AS THE SIGNED-IN USER (their access token): a database trigger requires
+   * auth.uid() and fills reporter_id, reference_code and status PENDING. Throws DbError.
+   */
+  insertReport(r: NewReport, accessToken: string): Promise<ReportRow>;
   /** Conditional update: only succeeds while the report is still PENDING. */
   reviewReport(id: string, patch: ReviewPatch): Promise<ReportRow | null>;
   insertReportHistory(h: ReportHistoryInsert): Promise<void>;
   countCommunities(activeOnly: boolean): Promise<number | null>;
   getProfileRole(userId: string): Promise<string | null>;
+  getProfile(userId: string): Promise<ProfileRow | null>;
+  /** Creates the profile row if it does not exist yet. Never changes an existing row (role included). */
+  ensureProfile(userId: string, fullName: string | null): Promise<void>;
+  countReports(status?: DbReportStatus): Promise<number | null>;
+  /** Alerts that have not expired at `at`; with communityId, that community's plus platform-wide ones. */
+  listActiveAlerts(f: { at: string; communityId?: string; limit?: number }): Promise<AlertRow[]>;
+  insertAlert(a: AlertInsert): Promise<AlertRow>;
   insertRiskAssessment(row: RiskInsert): Promise<void>;
   latestRiskAssessment(communityId: string): Promise<RiskRow | null>;
 }
 
+export interface AuthUser { id: string; fullName?: string | null }
+
 export interface AuthVerifier {
-  /** Returns the user id for a valid Supabase access token, otherwise null. */
-  verify(token: string): Promise<{ id: string } | null>;
+  /** Returns the user for a valid Supabase access token, otherwise null. */
+  verify(token: string): Promise<AuthUser | null>;
 }
 
 export const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -76,21 +91,26 @@ function fail(context: string, error: { message: string; code?: string } | null)
   throw new DbError(context, error?.code, error?.message ?? "unknown error");
 }
 
-/** FG-YYMMDD-XXXXX, five characters from an alphabet without look-alikes (0/O, 1/I). */
-export function newReferenceCode(now: Date): string {
-  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const d = now.toISOString().slice(2, 10).replace(/-/g, "");
-  let s = "";
-  for (let i = 0; i < 5; i++) s += alphabet[randomInt(alphabet.length)];
-  return `FG-${d}-${s}`;
-}
-
 export function createSupabase(url: string, secretKey: string): SupabaseClient {
   return createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+/** Code used when report submission is not configured (no publishable key on the server). */
+export const NO_USER_CLIENT = "FG_NO_PUBLISHABLE_KEY";
+
+export interface UserClientConfig { url: string; publishableKey: string }
+
 export class SupabaseDb implements Db {
-  constructor(private readonly sb: SupabaseClient) {}
+  constructor(private readonly sb: SupabaseClient, private readonly userClient: UserClientConfig | null = null) {}
+
+  /** A per-request client acting as the signed-in user (RLS and auth.uid() apply). */
+  private asUser(accessToken: string): SupabaseClient {
+    if (!this.userClient) throw new DbError("insert report", NO_USER_CLIENT, "SUPABASE_PUBLISHABLE_KEY is not configured");
+    return createClient(this.userClient.url, this.userClient.publishableKey, {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
 
   async listStates() {
     const { data, error } = await this.sb.from(T.states).select(COLS.states).order("name");
@@ -154,12 +174,8 @@ export class SupabaseDb implements Db {
     return (data as unknown as ReportRow) ?? null;
   }
 
-  async insertReport(r: NewReport, referenceCode: string) {
-    const { data, error } = await this.sb
-      .from(T.reports)
-      .insert({ ...r, reference_code: referenceCode, status: "PENDING" })
-      .select(COLS.reports)
-      .single();
+  async insertReport(r: NewReport, accessToken: string) {
+    const { data, error } = await this.asUser(accessToken).from(T.reports).insert(r).select(COLS.reports).single();
     if (error) fail("insert report", error);
     return data as unknown as ReportRow;
   }
@@ -195,6 +211,44 @@ export class SupabaseDb implements Db {
     return typeof role === "string" ? role : null;
   }
 
+  async getProfile(userId: string) {
+    if (!isUuid(userId)) return null;
+    const { data, error } = await this.sb.from(T.profiles).select("id,full_name,role").eq("id", userId).maybeSingle();
+    if (error) fail("profile", error);
+    return (data as unknown as ProfileRow) ?? null;
+  }
+
+  async ensureProfile(userId: string, fullName: string | null) {
+    if (await this.getProfile(userId)) return;
+    // Insert only: role is left to its database default (RESIDENT) and is never written here.
+    const { error } = await this.sb.from(T.profiles).insert({ id: userId, full_name: fullName });
+    if (error && error.code !== "23505") fail("create profile", error);
+  }
+
+  async countReports(status?: DbReportStatus) {
+    let q = this.sb.from(T.reports).select("id", { count: "exact", head: true });
+    if (status) q = q.eq("status", status);
+    const { count, error } = await q;
+    return error ? null : count;
+  }
+
+  async listActiveAlerts(f: { at: string; communityId?: string; limit?: number }) {
+    if (f.communityId && !isUuid(f.communityId)) return [];
+    let q = this.sb.from(T.alerts).select(COLS.alerts);
+    if (f.communityId) q = q.or(`community_id.is.null,community_id.eq.${f.communityId}`);
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(f.limit ?? 200);
+    if (error) fail("alerts", error);
+    // Expiry is filtered here rather than with a second .or() so the two conditions cannot combine wrongly.
+    const at = Date.parse(f.at);
+    return ((data ?? []) as unknown as AlertRow[]).filter((a) => !a.expires_at || Date.parse(a.expires_at) > at);
+  }
+
+  async insertAlert(a: AlertInsert) {
+    const { data, error } = await this.sb.from(T.alerts).insert(a).select(COLS.alerts).single();
+    if (error) fail("insert alert", error);
+    return data as unknown as AlertRow;
+  }
+
   async insertRiskAssessment(row: RiskInsert) {
     const { error } = await this.sb.from(T.risk).insert(row);
     if (error) fail("insert risk assessment", error);
@@ -219,6 +273,8 @@ export class SupabaseAuth implements AuthVerifier {
   async verify(token: string) {
     const { data, error } = await this.sb.auth.getUser(token);
     if (error || !data.user) return null;
-    return { id: data.user.id };
+    const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+    const name = [meta.display_name, meta.full_name, meta.name].find((v): v is string => typeof v === "string" && v.trim() !== "");
+    return { id: data.user.id, fullName: name?.trim().slice(0, 120) ?? null };
   }
 }

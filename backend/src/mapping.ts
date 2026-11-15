@@ -3,7 +3,7 @@
 // (UPPERCASE). Where the two sets do not line up, nothing is silently relabelled: the raw
 // database value is kept alongside, or the value is shown as unavailable.
 import type { ConfidenceLevel, InputKey, Severity } from "../../risk-engine/src/index.ts";
-import type { DbConfidence, DbHazardCategory, DbReportStatus, DbRiskLevel, DbVerificationStatus } from "./db/schema.ts";
+import type { DbAlertSeverity, DbAlertType, DbConfidence, DbHazardCategory, DbReportStatus, DbRiskLevel, DbVerificationStatus } from "./db/schema.ts";
 
 // ---- Hazard categories ----
 export const HAZARD_CATEGORIES = ["flooded_road", "rising_water_level", "blocked_drainage", "overflowing_waterway", "damaged_drainage", "other"] as const;
@@ -78,6 +78,19 @@ export function verificationFromDb(s: DbVerificationStatus | string | null): "ve
 
 // ---- Roles ----
 export const isAdminRole = (role: string | null) => role === "ADMIN";
+export const roleFromDb = (role: string | null): "resident" | "admin" => (isAdminRole(role) ? "admin" : "resident");
+
+// ---- Alerts (FloodGuard notices; none of these values means an official government warning) ----
+export const ALERT_SEVERITIES = ["info", "low", "moderate", "high", "critical"] as const;
+export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+export const ALERT_TYPES = ["flood_warning", "weather_notice", "safety_advisory", "community_notice", "other"] as const;
+export type AlertType = (typeof ALERT_TYPES)[number];
+export const alertSeverityToDb = (s: AlertSeverity) => s.toUpperCase() as DbAlertSeverity;
+export const alertTypeToDb = (t: AlertType) => t.toUpperCase() as DbAlertType;
+export const alertSeverityFromDb = (s: string): AlertSeverity =>
+  (ALERT_SEVERITIES as readonly string[]).includes(s.toLowerCase()) ? (s.toLowerCase() as AlertSeverity) : "info";
+export const alertTypeFromDb = (t: string): AlertType =>
+  (ALERT_TYPES as readonly string[]).includes(t.toLowerCase()) ? (t.toLowerCase() as AlertType) : "other";
 
 // ---- Plain labels for engine inputs (stored in inputs_used / inputs_missing) ----
 export const INPUT_LABELS: Record<InputKey, string> = {

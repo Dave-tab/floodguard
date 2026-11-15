@@ -51,10 +51,12 @@ export type RiskAssessmentStatus =
   | 'insufficient_data'
   | 'unavailable';
 
+/** Approved levels are low | high | severe | critical; 'moderate' is kept only for older data. */
 export type RiskLevel =
   | 'low'
   | 'moderate'
   | 'high'
+  | 'severe'
   | 'critical';
 
 export interface RiskFactorItem {

@@ -10,6 +10,7 @@ import { AdminRoute } from '../features/auth/AdminRoute';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { AlertsPage } from '../features/resident/AlertsPage';
 import { MyActivityPage } from '../features/resident/MyActivityPage';
+import { UserDashboardPage } from '../features/resident/UserDashboardPage';
 
 import AdminLayout from '../features/admin/AdminLayout';
 import AdminDashboard from '../features/admin/AdminDashboard';
@@ -53,6 +54,16 @@ export function AppRouter() {
 
         {/* Public alerts */}
         <Route path="/alerts" element={<AlertsPage />} />
+
+        {/* Signed-in resident dashboard */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <UserDashboardPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Resident activity */}
         <Route

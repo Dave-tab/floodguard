@@ -35,6 +35,8 @@ export interface CurrentUser {
   id: string;
   role: 'resident' | 'admin';
   fullName: string | null;
+  email: string | null;
+  preferredCommunityId: string | null;
 }
 
 /** Submits a report. The server records it as pending; it is never shown publicly until verified. */
@@ -52,4 +54,15 @@ export function listMyReports(): Promise<OwnReport[]> {
 
 export function getCurrentUser(): Promise<CurrentUser> {
   return apiRequest<CurrentUser>('/me', { requireAuth: true });
+}
+
+/** Saves (or clears with null) the signed-in user's own community. */
+export function updatePreferredCommunity(
+  preferredCommunityId: string | null,
+): Promise<{ preferredCommunityId: string | null }> {
+  return apiRequest<{ preferredCommunityId: string | null }>('/me', {
+    method: 'PATCH',
+    requireAuth: true,
+    body: { preferredCommunityId },
+  });
 }

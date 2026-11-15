@@ -1,10 +1,10 @@
 
 import type { ReactNode } from 'react';
 import {
-  Activity,
   Bell,
   Compass,
   Droplets,
+  LayoutDashboard,
   Map,
   Menu,
   ShieldCheck,
@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { Link, NavLink } from 'react-router-dom';
 import { useState } from 'react';
+
+import { AccountMenu } from './AccountMenu';
 
 interface ResidentShellProps {
   children: ReactNode;
@@ -42,9 +44,9 @@ const navigation = [
     icon: Bell,
   },
   {
-    label: 'My activity',
-    to: '/my-activity',
-    icon: Activity,
+    label: 'My dashboard',
+    to: '/dashboard',
+    icon: LayoutDashboard,
   },
 ];
 
@@ -109,12 +111,7 @@ export function ResidentShell({ children }: ResidentShellProps) {
 
           {/* DESKTOP ACTION */}
           <div className="hidden items-center gap-3 lg:flex">
-            <div className="flex items-center gap-2 rounded-full border border-brand-100 bg-brand-50 px-3 py-2">
-              <span className="h-2 w-2 rounded-full bg-brand-600" />
-              <span className="text-[11px] font-semibold text-brand-800">
-                Public access
-              </span>
-            </div>
+            <AccountMenu variant="desktop" />
           </div>
 
           {/* MOBILE MENU BUTTON */}
@@ -164,9 +161,11 @@ export function ResidentShell({ children }: ResidentShellProps) {
               })}
             </nav>
 
-            <div className="mx-auto mt-4 flex max-w-7xl items-center gap-2 border-t border-border-soft pt-4 text-xs font-medium text-text-secondary">
-              <span className="h-2 w-2 rounded-full bg-brand-600" />
-              Public access
+            <div className="mx-auto mt-4 max-w-7xl border-t border-border-soft pt-4">
+              <AccountMenu
+                variant="mobile"
+                onNavigate={() => setMobileMenuOpen(false)}
+              />
             </div>
           </div>
         )}

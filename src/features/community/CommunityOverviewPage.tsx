@@ -30,6 +30,7 @@ import { RiskAssessmentCard } from '../risk/RiskAssessmentCard';
 import { SafetyGuidelinesCard } from '../safety/SafetyGuidelinesCard';
 import { WeatherTelemetryCard } from '../weather/WeatherTelemetryCard';
 import { VerifiedHazardsPreviewCard } from '../resident/VerifiedHazardsPreviewCard';
+import { SetMyCommunityButton } from './SetMyCommunityButton';
 
 function CommunityOverviewContent({
   communityId,
@@ -285,7 +286,10 @@ function CommunityOverviewContent({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {!overview.community.isDemoData && (
+                    <SetMyCommunityButton communityId={communityId} />
+                  )}
                   <Link
                     to={`/report-hazard?communityId=${encodeURIComponent(communityId)}`}
                     className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-white shadow transition-all hover:bg-secondary/90 active:scale-95 md:flex-initial"

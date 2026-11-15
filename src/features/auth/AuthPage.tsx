@@ -29,7 +29,7 @@ export function AuthPage({ initialMode }: AuthPageProps) {
   } | null)?.from;
   const destination = from?.pathname
     ? `${from.pathname}${from.search ?? ''}`
-    : '/';
+    : '/dashboard';
 
  useEffect(() => {
   if (user) {

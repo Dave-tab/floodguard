@@ -1,0 +1,21 @@
+{
+  "name": "floodguard-risk-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FloodGuard AI preliminary community flood-risk engine, weather service and data contracts",
+  "scripts": {
+    "test": "vitest run tests",
+    "test:handoff": "vitest run handoff",
+    "typecheck": "tsc --noEmit",
+    "climatology": "tsx scripts/build-climatology.ts",
+    "assess:demo": "tsx scripts/assess-demo.ts",
+    "explain:live": "tsx scripts/explain-live.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

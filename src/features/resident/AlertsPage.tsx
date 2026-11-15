@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -15,9 +15,11 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ResidentShell } from '../../components/layout/ResidentShell';
+import { getLocationDataMode } from '../location/services/locationService';
+import { listActiveAlerts, type PublicAlert } from '../../services/adminService';
 
 type AlertSource = 'ai_prediction' | 'admin_notice';
-type AlertSeverity = 'critical' | 'high' | 'moderate' | 'low';
+type AlertSeverity = 'critical' | 'high' | 'moderate' | 'low' | 'info';
 type AlertStatus = 'active' | 'resolved';
 type SourceFilter = 'all' | AlertSource;
 type StatusFilter = 'all' | AlertStatus;
@@ -126,6 +128,7 @@ const severityStyles: Record<AlertSeverity, string> = {
   high: 'bg-orange-100 text-orange-800 border-orange-200',
   moderate: 'bg-amber-100 text-amber-800 border-amber-200',
   low: 'bg-blue-100 text-blue-800 border-blue-200',
+  info: 'bg-sky-50 text-sky-800 border-sky-200',
 };
 
 const severityLabels: Record<AlertSeverity, string> = {
@@ -133,7 +136,40 @@ const severityLabels: Record<AlertSeverity, string> = {
   high: 'High',
   moderate: 'Moderate',
   low: 'Low',
+  info: 'Information',
 };
+
+/** Live mode shows real administrator notices from the API; demo mode keeps the samples. */
+const IS_LIVE = getLocationDataMode() === 'api';
+
+function formatIssued(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? 'Issue time unavailable'
+    : new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(date);
+}
+
+function toCommunityAlert(alert: PublicAlert): CommunityAlert {
+  const firstSentence = alert.message.split(/(?<=[.!?])\s/)[0] ?? alert.message;
+
+  return {
+    id: alert.id,
+    title: alert.title,
+    summary: firstSentence,
+    description: alert.message,
+    source: 'admin_notice',
+    severity: alert.severity,
+    status: 'active',
+    community: alert.communityName ?? 'All communities',
+    location: alert.communityName ? 'community notice' : 'platform-wide notice',
+    issuedAt: formatIssued(alert.issuedAt),
+    publishedBy: 'FloodGuard administrator (not an official government warning)',
+    recommendations: [],
+  };
+}
 
 function SourceLabel({ source }: { source: AlertSource }) {
   if (source === 'ai_prediction') {
@@ -169,14 +205,45 @@ export function AlertsPage() {
   const [severityFilter, setSeverityFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+  const [liveAlerts, setLiveAlerts] = useState<CommunityAlert[]>([]);
+  const [liveLoading, setLiveLoading] = useState(IS_LIVE);
+  const [liveError, setLiveError] = useState('');
 
-  const activeAlerts = DEMO_ALERTS.filter(
+  useEffect(() => {
+    if (!IS_LIVE) return;
+    let active = true;
+
+    listActiveAlerts()
+      .then((rows) => {
+        if (active) setLiveAlerts(rows.map(toCommunityAlert));
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLiveError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to load alerts. Please try again.',
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLiveLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const allAlerts = IS_LIVE ? liveAlerts : DEMO_ALERTS;
+
+  const activeAlerts = allAlerts.filter(
     (alert) => alert.status === 'active',
   );
 
   const query = search.trim().toLowerCase();
 
-const filteredAlerts = DEMO_ALERTS.filter((alert) => {
+const filteredAlerts = allAlerts.filter((alert) => {
   const matchesSource =
     sourceFilter === 'all' || alert.source === sourceFilter;
 
@@ -243,13 +310,23 @@ const filteredAlerts = DEMO_ALERTS.filter((alert) => {
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
           <div>
             <p className="text-sm font-bold text-amber-900">
-              Demonstration data
+              {IS_LIVE ? 'FloodGuard notices' : 'Demonstration data'}
             </p>
             <p className="mt-1 text-xs leading-relaxed text-amber-800">
-              These sample alerts are for interface demonstration only.
-              They are not live flood warnings, verified local conditions,
-              or official emergency instructions.
+              {IS_LIVE
+                ? 'These are notices published by FloodGuard administrators. They are not official government flood warnings. Follow NEMA, NiMet, NIHSA and your State Emergency Management Agency for official warnings.'
+                : 'These sample alerts are for interface demonstration only. They are not live flood warnings, verified local conditions, or official emergency instructions.'}
             </p>
+            {IS_LIVE && liveLoading && (
+              <p className="mt-2 text-xs text-amber-800" role="status">
+                Loading current notices…
+              </p>
+            )}
+            {IS_LIVE && liveError && (
+              <p className="mt-2 text-xs font-semibold text-red-700" role="alert">
+                {liveError}
+              </p>
+            )}
           </div>
         </div>
 
@@ -436,7 +513,7 @@ const filteredAlerts = DEMO_ALERTS.filter((alert) => {
                     <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-border-soft pt-3 text-xs text-text-secondary">
                       <span className="inline-flex items-center gap-1.5">
                         <MapPin className="h-3.5 w-3.5" />
-                        {alert.community}, {alert.location}
+                        {alert.community} · {alert.location}
                       </span>
                       <span className="inline-flex items-center gap-1.5">
                         <CalendarDays className="h-3.5 w-3.5" />
@@ -456,6 +533,7 @@ const filteredAlerts = DEMO_ALERTS.filter((alert) => {
                         </p>
                       </div>
 
+                      {alert.recommendations.length > 0 && (
                       <div className="mb-4">
                         <h4 className="mb-2 text-sm font-bold text-primary">
                           Recommended safety actions
@@ -472,6 +550,7 @@ const filteredAlerts = DEMO_ALERTS.filter((alert) => {
                           ))}
                         </ul>
                       </div>
+                      )}
 
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border-soft pt-3 text-xs text-text-secondary">
                         <ShieldCheck className="h-4 w-4" />

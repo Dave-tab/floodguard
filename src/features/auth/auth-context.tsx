@@ -77,7 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       options: {
         data: {
           display_name: displayName.trim(),
+          full_name: displayName.trim(),
         },
+        // Where the confirmation link returns to (must be an allowed redirect URL in Supabase).
+        emailRedirectTo: `${window.location.origin}/login`,
       },
     });
 

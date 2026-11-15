@@ -88,8 +88,8 @@ export default function AdminLayout() {
 
         <div className="border-t border-border-soft p-5">
           <p className="text-xs leading-5 text-text-secondary">
-            FloodGuard AI monitoring workspace. Administrative access must be
-            enforced by the backend before production use.
+            FloodGuard AI monitoring workspace. Every admin action is checked
+            by the FloodGuard API against your administrator role.
           </p>
         </div>
       </aside>
@@ -106,8 +106,8 @@ export default function AdminLayout() {
                   Admin workspace
                 </h1>
               </div>
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800">
-                Frontend preview
+              <span className="rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-800">
+                Administrator
               </span>
             </div>
 

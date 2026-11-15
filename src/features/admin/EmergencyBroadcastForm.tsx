@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 
 import {
-  supabase,
-  type AlertPayload,
-  type AssessmentRiskLevel,
-  type CommunityPayload,
-} from '../../services/supabaseClient';
+  listActiveAlerts,
+  listAdminCommunities,
+  publishAlert,
+  type AdminCommunityRisk,
+  type AlertSeverity,
+  type AlertType,
+  type PublicAlert,
+} from '../../services/adminService';
 import {
   AdminAlert,
   AdminLoadingState,
@@ -19,16 +22,17 @@ import {
   getAdminErrorMessage,
 } from './adminUtils';
 
-interface RecentBroadcast extends AlertPayload {
-  community_name: string;
-}
+type RecentBroadcast = PublicAlert;
 
-const SEVERITIES: AssessmentRiskLevel[] = [
-  'LOW',
-  'MODERATE',
-  'HIGH',
-  'CRITICAL',
-];
+const SEVERITIES: AlertSeverity[] = ['info', 'low', 'moderate', 'high', 'critical'];
+
+const ALERT_TYPE_LABELS: Record<AlertType, string> = {
+  community_notice: 'Community notice',
+  flood_warning: 'Flood warning (FloodGuard notice)',
+  weather_notice: 'Weather notice',
+  safety_advisory: 'Safety advisory',
+  other: 'Other',
+};
 
 const BROADCAST_STATUS_STYLES = {
   Active: 'bg-emerald-100 text-emerald-900',
@@ -60,7 +64,7 @@ function BroadcastHistory({
   if (!hasError && broadcasts.length === 0) {
     return (
       <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600">
-        No administrator broadcasts are available.
+        No active administrator notices.
       </p>
     );
   }
@@ -68,7 +72,7 @@ function BroadcastHistory({
   return (
     <ul className="mt-5 divide-y divide-slate-200">
       {broadcasts.map((broadcast) => {
-        const status = getBroadcastStatus(broadcast.expires_at);
+        const status = getBroadcastStatus(broadcast.expiresAt);
 
         return (
           <li className="py-4 first:pt-0 last:pb-0" key={broadcast.id}>
@@ -78,7 +82,8 @@ function BroadcastHistory({
                   {broadcast.title}
                 </h4>
                 <p className="mt-1 text-sm text-slate-600">
-                  {broadcast.community_name}
+                  {broadcast.communityName ?? 'All communities'} ·{' '}
+                  {ALERT_TYPE_LABELS[broadcast.alertType]}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -97,15 +102,15 @@ function BroadcastHistory({
               <div>
                 <dt className="inline font-medium">Issued: </dt>
                 <dd className="inline">
-                  {formatAdminDate(broadcast.issued_at)}
+                  {formatAdminDate(broadcast.issuedAt)}
                 </dd>
               </div>
               <div>
                 <dt className="inline font-medium">Expires: </dt>
                 <dd className="inline">
-                  {broadcast.expires_at === null
+                  {broadcast.expiresAt === null
                     ? 'No expiry set'
-                    : formatAdminDate(broadcast.expires_at)}
+                    : formatAdminDate(broadcast.expiresAt)}
                 </dd>
               </div>
             </dl>
@@ -117,12 +122,13 @@ function BroadcastHistory({
 }
 
 export default function EmergencyBroadcastForm() {
-  const [communities, setCommunities] = useState<CommunityPayload[]>([]);
+  const [communities, setCommunities] = useState<AdminCommunityRisk[]>([]);
   const [broadcasts, setBroadcasts] = useState<RecentBroadcast[]>([]);
   const [communityId, setCommunityId] = useState('all');
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
-  const [severity, setSeverity] = useState<AssessmentRiskLevel | ''>('');
+  const [severity, setSeverity] = useState<AlertSeverity | ''>('');
+  const [alertType, setAlertType] = useState<AlertType>('community_notice');
   const [expiresAt, setExpiresAt] = useState('');
   const [isLoadingCommunities, setIsLoadingCommunities] = useState(true);
   const [isLoadingBroadcasts, setIsLoadingBroadcasts] = useState(true);
@@ -136,24 +142,13 @@ export default function EmergencyBroadcastForm() {
     setIsLoadingCommunities(true);
     setCommunityError(null);
 
-    if (!supabase) {
-      setCommunities([]);
-      setIsLoadingCommunities(false);
-      return;
-    }
-
     try {
-      const result = await supabase
-        .from('communities')
-        .select('id, community_name, state, lga, latitude, longitude, is_active')
-        .eq('is_active', true)
-        .order('community_name', { ascending: true });
-
-      if (result.error) {
-        throw new Error(`Unable to load communities: ${result.error.message}`);
-      }
-
-      setCommunities(result.data ?? []);
+      const rows = await listAdminCommunities();
+      setCommunities(
+        rows.sort((left, right) =>
+          left.communityName.localeCompare(right.communityName),
+        ),
+      );
     } catch (error: unknown) {
       setCommunityError(getAdminErrorMessage(error));
       setCommunities([]);
@@ -166,71 +161,8 @@ export default function EmergencyBroadcastForm() {
     setIsLoadingBroadcasts(true);
     setBroadcastError(null);
 
-    if (!supabase) {
-  setCommunities([]);
-  setCommunityError(null);
-  setIsLoadingCommunities(false);
-  return;
-}
-
     try {
-      const result = await supabase
-        .from('alerts')
-        .select(
-          'id, title, message, community_id, severity, expires_at, source_type, issued_at, created_by',
-        )
-        .eq('source_type', 'admin_notice')
-        .order('issued_at', { ascending: false })
-        .limit(5);
-
-      if (result.error) {
-        throw new Error(
-          `Unable to load recent broadcasts: ${result.error.message}`,
-        );
-      }
-
-      const rows = result.data ?? [];
-      const communityIds = [
-        ...new Set(
-          rows.flatMap((alert) =>
-            alert.community_id ? [alert.community_id] : [],
-          ),
-        ),
-      ];
-      let affectedCommunities: CommunityPayload[] = [];
-
-      if (communityIds.length > 0) {
-        const communitiesResult = await supabase
-          .from('communities')
-          .select(
-            'id, community_name, state, lga, latitude, longitude, is_active',
-          )
-          .in('id', communityIds);
-
-        if (communitiesResult.error) {
-          throw new Error(
-            `Unable to load broadcast communities: ${communitiesResult.error.message}`,
-          );
-        }
-
-        affectedCommunities = communitiesResult.data ?? [];
-      }
-
-      const namesById = new Map(
-        affectedCommunities.map((community) => [
-          community.id,
-          community.community_name,
-        ]),
-      );
-
-      setBroadcasts(
-        rows.map((alert) => ({
-          ...alert,
-          community_name: alert.community_id
-            ? namesById.get(alert.community_id) ?? 'Community unavailable'
-            : 'All communities',
-        })),
-      );
+      setBroadcasts((await listActiveAlerts()).slice(0, 5));
     } catch (error: unknown) {
       setBroadcastError(getAdminErrorMessage(error));
       setBroadcasts([]);
@@ -277,58 +209,41 @@ export default function EmergencyBroadcastForm() {
 
     if (
       communityId !== 'all' &&
-      !communities.some((community) => community.id === communityId)
+      !communities.some((community) => community.communityId === communityId)
     ) {
       setSubmitError('Choose a valid affected community.');
       return;
     }
 
-    if (!supabase) {
-  setBroadcasts([]);
-  setBroadcastError(null);
-  setIsLoadingBroadcasts(false);
-  return;
-}
+    if (trimmedTitle.length < 3) {
+      setSubmitError('The title must be at least 3 characters.');
+      return;
+    }
+
+    if (trimmedMessage.length < 10) {
+      setSubmitError('The message must be at least 10 characters.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const userResult = await supabase.auth.getUser();
-
-      if (userResult.error) {
-        throw new Error(
-          `Unable to verify the administrator session: ${userResult.error.message}`,
-        );
-      }
-
-      if (!userResult.data.user) {
-        throw new Error(
-          'Sign in with an administrator account to send a broadcast.',
-        );
-      }
-
-      const result = await supabase.from('alerts').insert({
+      await publishAlert({
         title: trimmedTitle,
         message: trimmedMessage,
-        community_id: communityId === 'all' ? null : communityId,
         severity,
-        expires_at: expiryDate.toISOString(),
-        source_type: 'admin_notice',
-        created_by: userResult.data.user.id,
-        issued_at: new Date().toISOString(),
+        alertType,
+        communityId: communityId === 'all' ? null : communityId,
+        expiresAt: expiryDate.toISOString(),
       });
-
-      if (result.error) {
-        throw new Error(
-          `The broadcast could not be sent: ${result.error.message}`,
-        );
-      }
 
       setTitle('');
       setMessage('');
       setCommunityId('all');
       setSeverity('');
+      setAlertType('community_notice');
       setExpiresAt('');
-      setSuccessMessage('Emergency broadcast sent successfully.');
+      setSuccessMessage('Notice published. Residents can now see it on the Alerts page.');
       await loadBroadcasts();
     } catch (error: unknown) {
       setSubmitError(getAdminErrorMessage(error));
@@ -339,15 +254,12 @@ export default function EmergencyBroadcastForm() {
 
   const minimumExpiry = toLocalDateTimeValue(new Date());
 
-  const previewMessage = supabase
-    ? 'No administrator broadcasts are available.'
-    : 'Preview mode: administrator broadcast history will appear here after backend integration.';
 
   return (
     <section className="space-y-6">
       <AdminSectionHeader
-        description={previewMessage}
-        descriptionClassName="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600"
+        description="Notices are FloodGuard administrator announcements. They are not official government warnings and do not change risk assessments."
+        descriptionClassName="mt-2 max-w-3xl text-sm leading-6 text-slate-600"
         eyebrow="Admin communications"
         eyebrowClassName="text-sm font-semibold uppercase tracking-wide text-red-700"
         title="Emergency broadcast"
@@ -400,7 +312,8 @@ export default function EmergencyBroadcastForm() {
               autoComplete="off"
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-950 placeholder:text-slate-400 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="Flood warning for affected communities"
+              maxLength={120}
+              placeholder="Drainage clearing in your area"
               required
               type="text"
               value={title}
@@ -412,7 +325,8 @@ export default function EmergencyBroadcastForm() {
             <textarea
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-slate-950 placeholder:text-slate-400 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               onChange={(event) => setMessage(event.target.value)}
-              placeholder="FLOOD WARNING: Heavy rainfall and rising water levels have been reported. Follow updates from local authorities and avoid flooded roads."
+              maxLength={1000}
+              placeholder="Describe what residents should know. Refer to official agencies (NEMA, NiMet, NIHSA) for government warnings."
               required
               rows={5}
               value={message}
@@ -429,8 +343,8 @@ export default function EmergencyBroadcastForm() {
             >
               <option value="all">All Communities</option>
               {communities.map((community) => (
-                <option key={community.id} value={community.id}>
-                  {community.community_name} · {community.lga}, {community.state}
+                <option key={community.communityId} value={community.communityId}>
+                  {community.communityName} · {community.lga}, {community.state}
                 </option>
               ))}
             </select>
@@ -444,7 +358,7 @@ export default function EmergencyBroadcastForm() {
             <select
               className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
               onChange={(event) =>
-                setSeverity(event.target.value as AssessmentRiskLevel | '')
+                setSeverity(event.target.value as AlertSeverity | '')
               }
               required
               value={severity}
@@ -454,7 +368,22 @@ export default function EmergencyBroadcastForm() {
               </option>
               {SEVERITIES.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {option.charAt(0).toUpperCase() + option.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block text-sm font-medium text-slate-800">
+            Notice type{' '}
+            <select
+              className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/30"
+              onChange={(event) => setAlertType(event.target.value as AlertType)}
+              value={alertType}
+            >
+              {Object.entries(ALERT_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
                 </option>
               ))}
             </select>
@@ -480,7 +409,7 @@ export default function EmergencyBroadcastForm() {
             disabled={isSubmitting || isLoadingCommunities}
             type="submit"
           >
-            {isSubmitting ? 'Sending broadcast…' : 'Send emergency broadcast'}
+            {isSubmitting ? 'Publishing notice…' : 'Publish notice'}
           </button>
         </form>
 
@@ -497,7 +426,7 @@ export default function EmergencyBroadcastForm() {
                 Recent broadcasts
               </h3>
               <p className="mt-1 text-sm text-slate-600">
-                Latest five administrator-issued notices.
+                Latest five active administrator notices.
               </p>
             </div>
             <button

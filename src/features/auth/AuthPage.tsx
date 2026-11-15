@@ -24,9 +24,12 @@ export function AuthPage({ initialMode }: AuthPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const destination =
-    (location.state as { from?: { pathname?: string } } | null)
-      ?.from?.pathname ?? '/';
+  const from = (location.state as {
+    from?: { pathname?: string; search?: string };
+  } | null)?.from;
+  const destination = from?.pathname
+    ? `${from.pathname}${from.search ?? ''}`
+    : '/';
 
  useEffect(() => {
   if (user) {
@@ -69,7 +72,7 @@ export function AuthPage({ initialMode }: AuthPageProps) {
 
         if (result.needsEmailConfirmation) {
           setMessage(
-            'Your account request was received. Check your email for a confirmation link before signing in.',
+            `Almost done: we sent a confirmation link to ${email.trim()}. Open it to activate your account, then sign in here. You are not signed in yet.`,
           );
           setMode('login');
           setPassword('');
@@ -82,11 +85,16 @@ export function AuthPage({ initialMode }: AuthPageProps) {
         navigate(destination, { replace: true });
       }
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Something went wrong. Please try again.',
-      );
+      const text = err instanceof Error ? err.message : '';
+      if (/email not confirmed/i.test(text)) {
+        setError(
+          'Your email address is not confirmed yet. Open the confirmation link we sent you, then sign in again.',
+        );
+      } else if (/invalid login credentials/i.test(text)) {
+        setError('The email or password is incorrect.');
+      } else {
+        setError(text || 'Something went wrong. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }

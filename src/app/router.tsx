@@ -6,6 +6,8 @@ import { ExplorePage } from '../features/resident/ExplorePage';
 import { HazardMapPage } from '../features/resident/HazardMapPage';
 import { ReportHazardPage } from '../features/resident/ReportHazardPage';
 import { AuthPage } from '../features/auth/AuthPage';
+import { AdminRoute } from '../features/auth/AdminRoute';
+import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { AlertsPage } from '../features/resident/AlertsPage';
 import { MyActivityPage } from '../features/resident/MyActivityPage';
 
@@ -42,7 +44,11 @@ export function AppRouter() {
         {/* Resident reporting */}
         <Route
           path="/report-hazard"
-          element={<ReportHazardPage />}
+          element={
+            <ProtectedRoute>
+              <ReportHazardPage />
+            </ProtectedRoute>
+          }
         />
 
         {/* Public alerts */}
@@ -51,11 +57,22 @@ export function AppRouter() {
         {/* Resident activity */}
         <Route
           path="/my-activity"
-          element={<MyActivityPage />}
+          element={
+            <ProtectedRoute>
+              <MyActivityPage />
+            </ProtectedRoute>
+          }
         />
 
-        {/* Admin frontend preview */}
-        <Route path="/admin" element={<AdminLayout />}>
+        {/* Admin (role checked here for the interface and by the API on every request) */}
+        <Route
+          path="/admin"
+          element={
+            <AdminRoute>
+              <AdminLayout />
+            </AdminRoute>
+          }
+        >
           <Route index element={<AdminDashboard />} />
           <Route path="reports" element={<AdminReportList />} />
           <Route path="communities" element={<CommunityRiskView />} />

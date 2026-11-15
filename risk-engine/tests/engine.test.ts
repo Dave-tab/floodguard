@@ -184,3 +184,19 @@ describe("riverine pathway", () => {
     expect(a.confidence.level).not.toBe("high");
   });
 });
+
+describe("soil moisture reporting", () => {
+  it("does not mention a soil value it could not use (no local soil history)", () => {
+    const c: Community = { ...urban, climatology: { ...clim, soilMoisture: undefined } };
+    const a = assessCommunity(base(c, { antecedent: wetness(20, 0.26) }));
+    const detail = a.drivers.find((d) => d.factor === "antecedent_rainfall")?.detail ?? "";
+    expect(detail).not.toMatch(/soil moisture/);
+    expect(a.confidence.missingInputs).toContain("soil_moisture");
+  });
+  it("mentions soil moisture when it was used", () => {
+    const a = assessCommunity(base(urban, { antecedent: wetness(20, 0.45) }));
+    const detail = a.drivers.find((d) => d.factor === "antecedent_rainfall")?.detail ?? "";
+    expect(detail).toMatch(/soil moisture 0\.45/);
+    expect(a.confidence.missingInputs).not.toContain("soil_moisture");
+  });
+});

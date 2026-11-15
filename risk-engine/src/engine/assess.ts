@@ -114,18 +114,27 @@ export function assessCommunity(inputs: AssessmentInputs): RiskAssessment {
     state.antecedent_rainfall = st;
     const parts: number[] = [];
     if (st.available) parts.push(scaleByPercentiles(an.past7dMm, clim.rain7d));
+    // Soil moisture is only used (and only mentioned) when it can be judged against local history.
+    let soilUsed = false;
     if (an.soilMoisture != null && clim.soilMoisture) {
       const sst = freshnessOf("soil_moisture", asOf(an), now);
       state.soil_moisture = sst;
-      if (sst.available) parts.push(scaleByPercentiles(an.soilMoisture, clim.soilMoisture));
-    } else missing("soil_moisture", "Soil moisture not available for this location.");
+      if (sst.available) {
+        parts.push(scaleByPercentiles(an.soilMoisture, clim.soilMoisture));
+        soilUsed = true;
+      }
+    } else if (an.soilMoisture == null) {
+      missing("soil_moisture", "Soil moisture not available for this location.");
+    } else {
+      missing("soil_moisture", "Soil moisture has no local history to compare against, so it was not used.");
+    }
     if (parts.length) {
       A = Math.max(...parts);
+      const soilText = soilUsed && an.soilMoisture != null ? `; soil moisture ${an.soilMoisture.toFixed(2)} m³/m³` : "";
       drivers.push({
         factor: "antecedent_rainfall",
         value: round(A),
-        detail: `Past 7 days ${an.past7dMm.toFixed(0)} mm (${describePercentile(an.past7dMm, clim.rain7d)})` +
-          (an.soilMoisture != null ? `; soil moisture ${an.soilMoisture.toFixed(2)} m³/m³` : ""),
+        detail: `Past 7 days ${an.past7dMm.toFixed(0)} mm (${describePercentile(an.past7dMm, clim.rain7d)})${soilText}`,
       });
     }
     evidence.push(ev("reanalysis", "antecedent_rainfall", an, st.label, QUALITY.antecedent_rainfall));

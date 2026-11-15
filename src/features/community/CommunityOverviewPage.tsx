@@ -287,7 +287,7 @@ function CommunityOverviewContent({
 
                 <div className="flex items-center gap-2">
                   <Link
-                    to="/report-hazard"
+                    to={`/report-hazard?communityId=${encodeURIComponent(communityId)}`}
                     className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-white shadow transition-all hover:bg-secondary/90 active:scale-95 md:flex-initial"
                   >
                     <BellPlus className="h-4 w-4" aria-hidden="true" />

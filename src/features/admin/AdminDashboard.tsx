@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react';
 
 import {
-  supabase,
+  getAdminSummary,
   type AdminReportStatus,
   type AssessmentRiskLevel,
-  type CommunityPayload,
-  type HazardReportPayload,
-} from '../../services/supabaseClient';
+} from '../../services/adminService';
+import type { HazardCategory } from '../../types/resident';
 import {
   AdminAlert,
   AdminLoadingState,
@@ -25,16 +24,16 @@ import CommunityRiskView from './CommunityRiskView';
 interface DashboardMetrics {
   communities: number;
   highRiskAssessments: number;
-  totalReports: number;
-  pendingReports: number;
-  verifiedReports: number;
+  totalReports: number | null;
+  pendingReports: number | null;
+  verifiedReports: number | null;
 }
 
 interface RecentIncident {
   id: string;
   communityId: string;
   communityName: string;
-  category: HazardReportPayload['hazard_category'];
+  category: HazardCategory;
   description: string;
   status: AdminReportStatus;
   submittedAt: string;
@@ -43,8 +42,8 @@ interface RecentIncident {
 interface RecentAssessment {
   id: string;
   communityName: string;
-  riskLevel: AssessmentRiskLevel;
-  assessmentTime: string;
+  riskLevel: AssessmentRiskLevel | null;
+  assessmentTime: string | null;
 }
 
 interface DashboardData {
@@ -63,159 +62,31 @@ export default function AdminDashboard() {
     setError(null);
     setData(null);
 
-    if (!supabase) {
-      setError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to load admin data.',
-      );
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const results = await Promise.all([
-        supabase
-          .from('communities')
-          .select('id', { count: 'exact', head: true })
-          .eq('is_active', true),
-
-        supabase
-          .from('risk_assessments')
-          .select('id', { count: 'exact', head: true })
-          .in('risk_level', ['HIGH', 'CRITICAL']),
-
-        supabase
-          .from('hazard_reports')
-          .select('id', { count: 'exact', head: true }),
-
-        supabase
-          .from('hazard_reports')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pending'),
-
-        supabase
-          .from('hazard_reports')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'verified'),
-
-        supabase
-          .from('hazard_reports')
-          .select(
-            'id, community_id, hazard_category, description, status, admin_notes, image_url, submitted_at',
-          )
-          .order('submitted_at', { ascending: false })
-          .limit(6),
-
-        supabase
-          .from('risk_assessments')
-          .select('*')
-          .order('assessment_time', { ascending: false })
-          .limit(5),
-      ]);
-
-      const [
-        communitiesCount,
-        highRiskCount,
-        totalReportsCount,
-        pendingCount,
-        verifiedCount,
-        incidentsResult,
-        assessmentsResult,
-      ] = results;
-
-
-
-      const queryErrors: string[] = [];
-
-      if (communitiesCount.error) {
-        queryErrors.push(`community count: ${communitiesCount.error.message}`);
-      }
-      if (highRiskCount.error) {
-        queryErrors.push(
-          `high-risk assessment count: ${highRiskCount.error.message}`,
-        );
-      }
-      if (totalReportsCount.error) {
-        queryErrors.push(`total report count: ${totalReportsCount.error.message}`);
-      }
-      if (pendingCount.error) {
-        queryErrors.push(`pending report count: ${pendingCount.error.message}`);
-      }
-      if (verifiedCount.error) {
-        queryErrors.push(`verified report count: ${verifiedCount.error.message}`);
-      }
-    
-      if (incidentsResult.error) {
-        queryErrors.push(`recent hazard reports: ${incidentsResult.error.message}`);
-      }
-      if (assessmentsResult.error) {
-        queryErrors.push(
-          `recent risk assessments: ${assessmentsResult.error.message}`,
-        );
-      }
-
-      if (queryErrors.length > 0) {
-        throw new Error(`Unable to load dashboard data: ${queryErrors.join('; ')}`);
-      }
-
-      const incidents = incidentsResult.data ?? [];
-      const assessments = assessmentsResult.data ?? [];
-      const communityIds = [
-        ...new Set([
-          ...incidents.map((report) => report.community_id),
-          ...assessments.map((assessment) => assessment.community_id),
-        ]),
-      ];
-
-      let communities: CommunityPayload[] = [];
-
-      if (communityIds.length > 0) {
-        const communitiesResult = await supabase
-          .from('communities')
-          .select(
-            'id, community_name, state, lga, latitude, longitude, is_active',
-          )
-          .in('id', communityIds);
-
-        if (communitiesResult.error) {
-          throw new Error(
-            `Unable to load community names: ${communitiesResult.error.message}`,
-          );
-        }
-
-        communities = communitiesResult.data ?? [];
-      }
-
-      const communityNames = new Map(
-        communities.map((community) => [
-          community.id,
-          community.community_name,
-        ]),
-      );
+      const summary = await getAdminSummary();
 
       setData({
         metrics: {
-          communities: communitiesCount.count ?? 0,
-          highRiskAssessments: highRiskCount.count ?? 0,
-          totalReports: totalReportsCount.count ?? 0,
-          pendingReports: pendingCount.count ?? 0,
-          verifiedReports: verifiedCount.count ?? 0,
+          communities: summary.activeCommunities,
+          highRiskAssessments: summary.elevatedAssessments,
+          totalReports: summary.totalReports,
+          pendingReports: summary.pendingReports,
+          verifiedReports: summary.verifiedReports,
         },
-        incidents: incidents.map((report) => ({
+        incidents: summary.recentReports.map((report) => ({
           id: report.id,
-          communityId: report.community_id,
-          communityName:
-            communityNames.get(report.community_id) ?? 'Community unavailable',
-          category: report.hazard_category,
+          communityId: report.communityId,
+          communityName: report.communityName,
+          category: report.category,
           description: report.description,
           status: report.status,
-          submittedAt: report.submitted_at,
+          submittedAt: report.createdAt,
         })),
-        assessments: assessments.map((assessment) => ({
-          id: assessment.id,
-          communityName:
-            communityNames.get(assessment.community_id) ?? 'Community unavailable',
-          riskLevel: assessment.risk_level,
-          assessmentTime: assessment.assessment_time,
+        assessments: summary.recentAssessments.map((assessment) => ({
+          id: `${assessment.communityId}:${assessment.assessedAt ?? ''}`,
+          communityName: assessment.communityName,
+          riskLevel: assessment.status === 'available' ? assessment.level : null,
+          assessmentTime: assessment.assessedAt,
         })),
       });
     } catch (error: unknown) {
@@ -239,7 +110,7 @@ export default function AdminDashboard() {
       <div className="mx-auto max-w-7xl space-y-10 px-5 py-10 md:px-8">
         <AdminSectionHeader
           className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
-          description="Current database summaries and recent community activity."
+          description="Live summaries from the FloodGuard API and recent community activity."
           descriptionClassName="mt-3 max-w-2xl text-sm leading-7 text-text-secondary md:text-base"
           eyebrow="Environmental monitoring"
           eyebrowClassName="text-xs font-bold uppercase tracking-[0.16em] text-brand-600"
@@ -289,7 +160,7 @@ export default function AdminDashboard() {
   <MetricCard
     label="High-risk communities"
     value={data?.metrics.highRiskAssessments ?? 'Unavailable'}
-    description="Assessments classified high or critical"
+    description="Current assessments classified high, severe or critical"
     valueClass="text-red-700"
   />
   <MetricCard
@@ -376,7 +247,7 @@ export default function AdminDashboard() {
                           {assessment.communityName}
                         </h3>
                         <p className="mt-1 text-xs text-text-secondary">
-                          Assessed {formatAdminDate(assessment.assessmentTime)}
+                          Assessed {formatAdminDate(assessment.assessmentTime, 'Not yet assessed')}
                         </p>
                       </div>
                       <AdminRiskBadge riskLevel={assessment.riskLevel} />

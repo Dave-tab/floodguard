@@ -1,4 +1,5 @@
-import type { HazardCategory, HazardReportStatus } from '../../types/resident';
+import type { AdminReportStatus } from '../../services/adminService';
+import type { HazardCategory } from '../../types/resident';
 
 export const ADMIN_CATEGORY_LABELS: Record<HazardCategory, string> = {
   blocked_drainage: 'Blocked drainage',
@@ -9,10 +10,13 @@ export const ADMIN_CATEGORY_LABELS: Record<HazardCategory, string> = {
   rising_water_level: 'Rising water level',
 };
 
-export const ADMIN_STATUS_LABELS: Record<HazardReportStatus, string> = {
+/** in_progress / resolved are not approved statuses; shown only if the database holds them. */
+export const ADMIN_STATUS_LABELS: Record<AdminReportStatus, string> = {
   pending: 'Pending',
   verified: 'Verified',
   rejected: 'Rejected',
+  in_progress: 'In progress (not an approved status)',
+  resolved: 'Resolved (not an approved status)',
 };
 
 export function formatAdminDate(

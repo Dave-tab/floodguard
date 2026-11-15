@@ -2,8 +2,9 @@ import type { ReactNode } from 'react';
 
 import type {
   AdminReportStatus,
+  AlertSeverity,
   AssessmentRiskLevel,
-} from '../../services/supabaseClient';
+} from '../../services/adminService';
 import { ADMIN_STATUS_LABELS } from './adminUtils';
 
 const STATUS_BADGE_STYLES = {
@@ -13,6 +14,8 @@ const STATUS_BADGE_STYLES = {
       pending: 'bg-amber-50 text-amber-800',
       verified: 'bg-brand-50 text-brand-800',
       rejected: 'bg-red-50 text-red-800',
+      in_progress: 'bg-slate-100 text-slate-700',
+      resolved: 'bg-slate-100 text-slate-700',
     },
   },
   report: {
@@ -21,6 +24,8 @@ const STATUS_BADGE_STYLES = {
       pending: 'bg-amber-50 text-amber-800 ring-amber-600/20',
       verified: 'bg-brand-50 text-brand-800 ring-brand-100',
       rejected: 'bg-red-50 text-red-800 ring-red-600/20',
+      in_progress: 'bg-slate-100 text-slate-700 ring-slate-300',
+      resolved: 'bg-slate-100 text-slate-700 ring-slate-300',
     },
   },
 } satisfies Record<
@@ -31,38 +36,49 @@ const STATUS_BADGE_STYLES = {
   }
 >;
 
+const RISK_LABELS: Record<AssessmentRiskLevel, string> = {
+  low: 'Low',
+  high: 'High',
+  severe: 'Severe',
+  critical: 'Critical',
+};
+
 const RISK_BADGE_STYLES = {
   dashboard: {
     base: 'rounded-full px-3 py-1.5 text-[11px] font-bold',
     colors: {
-      LOW: 'bg-emerald-50 text-emerald-800',
-      MODERATE: 'bg-amber-50 text-amber-800',
-      HIGH: 'bg-orange-50 text-orange-800',
-      CRITICAL: 'bg-red-50 text-red-800',
+      low: 'bg-emerald-50 text-emerald-800',
+      high: 'bg-orange-50 text-orange-800',
+      severe: 'bg-red-50 text-red-700',
+      critical: 'bg-red-100 text-red-900',
     },
+    none: 'bg-slate-100 text-slate-700',
   },
   community: {
     base: 'inline-flex rounded-full border px-3 py-1.5 text-sm font-bold',
     colors: {
-      LOW: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-      MODERATE: 'border-amber-200 bg-amber-50 text-amber-800',
-      HIGH: 'border-orange-200 bg-orange-50 text-orange-800',
-      CRITICAL: 'border-red-200 bg-red-50 text-red-800',
+      low: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+      high: 'border-orange-200 bg-orange-50 text-orange-800',
+      severe: 'border-red-200 bg-red-50 text-red-700',
+      critical: 'border-red-300 bg-red-100 text-red-900',
     },
+    none: 'border-slate-200 bg-slate-50 text-slate-700',
   },
 } satisfies Record<
   'dashboard' | 'community',
   {
     base: string;
     colors: Record<AssessmentRiskLevel, string>;
+    none: string;
   }
 >;
 
-const SEVERITY_BADGE_STYLES: Record<AssessmentRiskLevel, string> = {
-  LOW: 'border-emerald-300 bg-emerald-50 text-emerald-900',
-  MODERATE: 'border-amber-300 bg-amber-50 text-amber-900',
-  HIGH: 'border-orange-300 bg-orange-50 text-orange-900',
-  CRITICAL: 'border-red-300 bg-red-50 text-red-900',
+const SEVERITY_BADGE_STYLES: Record<AlertSeverity, string> = {
+  info: 'border-sky-300 bg-sky-50 text-sky-900',
+  low: 'border-emerald-300 bg-emerald-50 text-emerald-900',
+  moderate: 'border-amber-300 bg-amber-50 text-amber-900',
+  high: 'border-orange-300 bg-orange-50 text-orange-900',
+  critical: 'border-red-300 bg-red-50 text-red-900',
 };
 
 interface AdminSectionHeaderProps {
@@ -136,28 +152,27 @@ export function AdminRiskBadge({
   variant = 'dashboard',
   ariaLabel,
 }: Readonly<{
-  riskLevel: AssessmentRiskLevel;
+  /** null when there is no current level (insufficient data or unavailable): never shown as Low. */
+  riskLevel: AssessmentRiskLevel | null;
   variant?: 'dashboard' | 'community';
   ariaLabel?: string;
 }>) {
   const styles = RISK_BADGE_STYLES[variant];
+  const color = riskLevel ? styles.colors[riskLevel] : styles.none;
 
   return (
-    <span
-      aria-label={ariaLabel}
-      className={`${styles.base} ${styles.colors[riskLevel]}`}
-    >
-      {riskLevel}
+    <span aria-label={ariaLabel} className={`${styles.base} ${color}`}>
+      {riskLevel ? RISK_LABELS[riskLevel] : 'No current level'}
     </span>
   );
 }
 
 export function AdminSeverityBadge({
   severity,
-}: Readonly<{ severity: AssessmentRiskLevel }>) {
+}: Readonly<{ severity: AlertSeverity }>) {
   return (
     <span
-      className={`rounded-full border px-2.5 py-1 text-xs font-bold ${SEVERITY_BADGE_STYLES[severity]}`}
+      className={`rounded-full border px-2.5 py-1 text-xs font-bold capitalize ${SEVERITY_BADGE_STYLES[severity]}`}
     >
       {severity}
     </span>

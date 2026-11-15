@@ -1,22 +1,22 @@
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
   Camera,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   Crosshair,
   Droplets,
   MapPin,
   ShieldCheck,
-  Trash2,
-  Upload,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { ResidentShell } from '../../components/layout/ResidentShell';
 import { listActiveCommunities } from '../../services/residentService';
+import { submitReport, type OwnReport } from '../../services/reportService';
 import type { Community, HazardCategory } from '../../types/resident';
 
 const HAZARD_CATEGORIES: {
@@ -58,7 +58,6 @@ const HAZARD_CATEGORIES: {
 
 const DESCRIPTION_MIN = 20;
 const DESCRIPTION_MAX = 1000;
-const PHOTO_MAX_SIZE = 5 * 1024 * 1024;
 
 const inputClass =
   'w-full rounded-xl border border-border-soft bg-white px-4 py-3 text-sm text-brand-950 outline-none transition placeholder:text-slate-400 focus:border-brand-600 focus:ring-2 focus:ring-brand-600/10';
@@ -68,12 +67,23 @@ interface Coordinates {
   longitude: number;
 }
 
+/** The API stores one description; landmark details are appended to it. */
+function composeDescription(description: string, locationDetails: string): string {
+  const details = locationDetails.trim();
+  return details
+    ? `${description.trim()}\n\nLocation details: ${details}`
+    : description.trim();
+}
+
 export function ReportHazardPage() {
+  const [searchParams] = useSearchParams();
   const [communities, setCommunities] = useState<Community[]>([]);
   const [communitiesLoading, setCommunitiesLoading] = useState(true);
   const [communityError, setCommunityError] = useState('');
 
-  const [communityId, setCommunityId] = useState('');
+  const [communityId, setCommunityId] = useState(
+    () => searchParams.get('communityId') ?? '',
+  );
   const [category, setCategory] = useState<HazardCategory | ''>('');
   const [description, setDescription] = useState('');
   const [locationDetails, setLocationDetails] = useState('');
@@ -82,12 +92,9 @@ export function ReportHazardPage() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
 
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState('');
-  const [photoError, setPhotoError] = useState('');
-
   const [submitError, setSubmitError] = useState('');
-  const [demoSubmitted, setDemoSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState<OwnReport | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -114,54 +121,6 @@ export function ReportHazardPage() {
       active = false;
     };
   }, []);
-
-  function handlePhotoChange(event: ChangeEvent<HTMLInputElement>) {
-    const selectedFile = event.target.files?.[0];
-
-    setPhotoError('');
-    setSubmitError('');
-
-    if (!selectedFile) return;
-
-    if (!selectedFile.type.startsWith('image/')) {
-      setPhotoError('Please select a valid image file.');
-      event.target.value = '';
-      return;
-    }
-
-    if (selectedFile.size > PHOTO_MAX_SIZE) {
-      setPhotoError('Image must be 5 MB or smaller.');
-      event.target.value = '';
-      return;
-    }
-
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setPhoto(selectedFile);
-        setPhotoPreview(reader.result);
-      }
-    };
-
-    reader.onerror = () => {
-      setPhotoError('Unable to preview this image. Please try another.');
-    };
-
-    reader.readAsDataURL(selectedFile);
-  }
-
-  function removePhoto() {
-    setPhoto(null);
-    setPhotoPreview('');
-    setPhotoError('');
-
-    const fileInput = document.getElementById(
-      'hazard-photo',
-    ) as HTMLInputElement | null;
-
-    if (fileInput) fileInput.value = '';
-  }
 
   function getCurrentLocation() {
     setLocationError('');
@@ -200,7 +159,7 @@ export function ReportHazardPage() {
     );
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError('');
 
@@ -216,16 +175,36 @@ export function ReportHazardPage() {
       return;
     }
 
-    if (description.trim().length > DESCRIPTION_MAX) {
+    const fullDescription = composeDescription(description, locationDetails);
+
+    if (fullDescription.length > DESCRIPTION_MAX) {
       setSubmitError(
-        `Your description cannot exceed ${DESCRIPTION_MAX} characters.`,
+        `Your description and location details together cannot exceed ${DESCRIPTION_MAX} characters.`,
       );
       return;
     }
 
-    // Frontend demonstration only. No report is sent to a backend.
-    setDemoSubmitted(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setSubmitting(true);
+
+    try {
+      const report = await submitReport({
+        communityId,
+        category,
+        description: fullDescription,
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
+      });
+      setSubmitted(report);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error: unknown) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : 'Your report could not be sent. Please try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function resetForm() {
@@ -235,11 +214,8 @@ export function ReportHazardPage() {
     setLocationDetails('');
     setCoordinates(null);
     setLocationError('');
-    setPhoto(null);
-    setPhotoPreview('');
-    setPhotoError('');
     setSubmitError('');
-    setDemoSubmitted(false);
+    setSubmitted(null);
   }
 
   const selectedCommunity = communities.find(
@@ -261,25 +237,31 @@ export function ReportHazardPage() {
           Back to Explore
         </Link>
 
-        {demoSubmitted ? (
+        {submitted ? (
           <section
             className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm md:p-9"
             aria-live="polite"
           >
             <div className="mx-auto flex max-w-xl flex-col items-center text-center">
-              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
-                <CheckCircle2 className="h-9 w-9 text-emerald-600" />
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-amber-50">
+                <Clock3 className="h-9 w-9 text-amber-600" />
               </div>
 
-
               <h1 className="mt-4 text-2xl font-extrabold text-brand-950">
-                Your report form is complete!
+                Report received: pending review
               </h1>
 
               <p className="mt-3 text-sm leading-7 text-text-secondary">
-                Your information is submitted. This is a
-                demonstration only: nothing has been saved or sent to
-                FloodGuard's backend.
+                Thank you. Your report has been saved and is waiting for
+                an administrator to review it. It will only appear
+                publicly as a confirmed hazard if it is verified.
+              </p>
+
+              <p className="mt-4 rounded-xl border border-border-soft bg-canvas px-4 py-3 text-sm text-brand-950">
+                Reference:{' '}
+                <span className="font-mono font-bold">
+                  {submitted.referenceCode}
+                </span>
               </p>
 
               <div className="mt-7 w-full rounded-xl bg-canvas p-5 text-left">
@@ -328,14 +310,12 @@ export function ReportHazardPage() {
                     </div>
                   )}
 
-                  {photo && (
-                    <div>
-                      <span className="text-text-secondary">Photo attached</span>
-                      <p className="font-semibold text-brand-950">
-                        {photo.name}
-                      </p>
-                    </div>
-                  )}
+                  <div>
+                    <span className="text-text-secondary">Status</span>
+                    <p className="font-semibold text-amber-700">
+                      Pending review
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -349,10 +329,10 @@ export function ReportHazardPage() {
                 </button>
 
                 <Link
-                  to="/"
+                  to="/my-activity"
                   className="flex-1 rounded-xl border border-border-soft px-5 py-3 text-center text-sm font-bold text-brand-950 transition hover:bg-canvas"
                 >
-                  Back to Explore
+                  View my reports
                 </Link>
               </div>
             </div>
@@ -606,69 +586,19 @@ export function ReportHazardPage() {
                       Add photo evidence
                     </h2>
                     <p className="mt-1 text-sm text-text-secondary">
-                      A photo can help people understand the situation. This
-                      step is optional.
+                      Coming soon.
                     </p>
                   </div>
                 </div>
 
-                {photoPreview ? (
-                  <div className="overflow-hidden rounded-xl border border-border-soft">
-                    <img
-                      src={photoPreview}
-                      alt="Selected hazard evidence preview"
-                      className="max-h-72 w-full bg-canvas object-contain"
-                    />
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 p-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-brand-950">
-                          {photo?.name}
-                        </p>
-                        <p className="text-xs text-text-secondary">
-                          {photo
-                            ? `${(photo.size / (1024 * 1024)).toFixed(2)} MB`
-                            : ''}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={removePhoto}
-                        className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold text-red-600 transition hover:bg-red-50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Remove photo
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <label
-                    htmlFor="hazard-photo"
-                    className="flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed border-border-soft bg-canvas px-5 py-9 text-center transition hover:border-brand-400 hover:bg-brand-50/40"
-                  >
-                    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white text-brand-700 shadow-sm">
-                      <Upload className="h-5 w-5" />
-                    </div>
-                    <span className="text-sm font-bold text-brand-950">
-                      Choose a photo to upload
-                    </span>
-                    <span className="mt-1 text-xs text-text-secondary">
-                      JPG, PNG or other image formats · Maximum 5 MB
-                    </span>
-                    <input
-                      id="hazard-photo"
-                      type="file"
-                      accept="image/*"
-                      onChange={handlePhotoChange}
-                      className="sr-only"
-                    />
-                  </label>
-                )}
-
-                {photoError && (
-                  <p className="mt-3 text-xs text-red-600">{photoError}</p>
-                )}
+                <div className="flex items-start gap-3 rounded-xl border border-dashed border-border-soft bg-canvas px-5 py-6">
+                  <Camera className="mt-0.5 h-5 w-5 shrink-0 text-text-secondary" />
+                  <p className="text-sm leading-6 text-text-secondary">
+                    Photo upload is not available yet. Please describe what you
+                    saw in the description above; your report can still be
+                    reviewed without a photo.
+                  </p>
+                </div>
               </section>
 
               {submitError && (
@@ -708,10 +638,12 @@ export function ReportHazardPage() {
 
                 <button
                   type="submit"
-                  disabled={communitiesLoading || communities.length === 0}
+                  disabled={
+                    submitting || communitiesLoading || communities.length === 0
+                  }
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-950 px-7 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Preview demo submission
+                  {submitting ? 'Submitting…' : 'Submit report'}
                   <CheckCircle2 className="h-4 w-4" />
                 </button>
               </div>

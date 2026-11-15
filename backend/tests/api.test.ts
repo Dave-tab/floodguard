@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reportSchema, reviewSchema } from "../src/app.ts";
+import { LocationIndex } from "../src/locations.ts";
 import { ids, setup } from "./fakes.ts";
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -176,6 +177,34 @@ describe("locations", () => {
     expect(dsStates.data[0].id).toBe("NG025");
     expect(dsStates.source).toMatch(/Open Admin Data/);
     expect((await ds.app.inject({ url: "/locations/lgas/NG025012/communities" })).json().data).toEqual([]);
+  });
+  it("keeps national coverage when the database holds only some States/LGAs", () => {
+    // Live situation on 2026-11-15: the DB had Oyo / Ibadan North only.
+    const ds = {
+      states: [{ id: "NG025", name_en: "Lagos" }, { id: "NG031", name_en: "Oyo" }],
+      lgas: [
+        { id: "NG025012", name_en: "Ikorodu", parent_id: "NG025" },
+        { id: "NG031006", name_en: "Ibadan North", parent_id: "NG031" },
+      ],
+    };
+    const oyo = { id: "11111111-0000-4000-8000-000000000001", name: "Oyo", code: "OY", source_record_id: null };
+    const ibn = { id: "11111111-0000-4000-8000-000000000002", name: "Ibadan North", state_id: oyo.id, code: null, source_record_id: null };
+    const idx = new LocationIndex(ds, [oyo] as never, [ibn] as never);
+    expect(idx.states.map((s) => s.name)).toEqual(["Lagos", "Oyo"]);
+    expect(idx.state("NG025")).toMatchObject({ id: "NG025", dbId: null });
+    expect(idx.state("NG031")).toMatchObject({ id: oyo.id, dbId: oyo.id });
+    expect(idx.lga("NG025012")).toMatchObject({ id: "NG025012", name: "Ikorodu", stateId: "NG025", stateName: "Lagos", dbId: null });
+    expect(idx.lga("NG031006")).toMatchObject({ id: ibn.id, dbId: ibn.id, datasetId: "NG031006" });
+    expect(idx.lgasOfState("NG025").map((l) => l.name)).toEqual(["Ikorodu"]);
+    expect(idx.lga("NG999999")).toBeNull();
+  });
+  it("returns an empty list, not 404, for a real LGA with no communities yet", async () => {
+    const { app, db } = await setup();
+    db.lgas = db.lgas.filter((l) => l.code !== "NG025009"); // Eti-Osa not in the DB
+    const res = await app.inject({ url: "/locations/lgas/NG025009/communities" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual([]);
+    expect((await app.inject({ url: "/locations/lgas/NG999999/communities" })).statusCode).toBe(404);
   });
   it("404s for inactive communities", async () => {
     const { app } = await setup();

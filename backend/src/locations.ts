@@ -5,8 +5,8 @@
 // resolves either kind of id:
 //   dataset id -> DB row by `code` or `source_record_id`, then by case-insensitive name
 //   within the state of the same name.
-// The states/LGAs endpoints serve the database rows when those tables have data, and the
-// bundled dataset while they are empty (they were empty on 2026-11-15).
+// The states/LGAs endpoints always cover all 37 States/FCT and 774 LGAs: database rows where
+// they exist (with their uuids), and the bundled dataset entries for everything else.
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { Db } from "./db/repo.ts";
@@ -31,7 +31,7 @@ export interface StateInfo { id: string; name: string; code: string | null; dbId
 export interface LgaInfo { id: string; name: string; stateId: string; stateName: string; dbId: string | null; datasetId: string | null }
 
 export class LocationIndex {
-  /** What the states/LGAs endpoints serve: DB rows if present, else the dataset. */
+  /** "database": DB rows merged over the national dataset; "dataset": DB admin tables empty. */
   readonly source: "database" | "dataset";
   readonly states: StateInfo[];
   readonly lgas: LgaInfo[];
@@ -80,6 +80,24 @@ export class LocationIndex {
           this.lgaById.set(d.id, info);
         }
       }
+      // The database may hold only some States/LGAs (on 2026-11-15: Oyo only). Keep national
+      // coverage by adding every dataset State/LGA that has no database row yet; such an LGA
+      // simply has no communities, it is not "not found".
+      for (const s of ds.states) {
+        if (dsToDbState.has(s.id)) continue;
+        const info: StateInfo = { id: s.id, name: s.name_en, code: null, dbId: null, datasetId: s.id };
+        this.states.push(info);
+        this.stateById.set(s.id, info);
+      }
+      for (const d of ds.lgas) {
+        if (this.lgaById.has(d.id)) continue;
+        const st = this.state(d.parent_id ?? "");
+        const info: LgaInfo = { id: d.id, name: d.name_en, stateId: st?.id ?? d.parent_id ?? "", stateName: st?.name ?? "", dbId: null, datasetId: d.id };
+        this.lgas.push(info);
+        this.lgaById.set(d.id, info);
+      }
+      this.states.sort((a, b) => a.name.localeCompare(b.name));
+      this.lgas.sort((a, b) => a.name.localeCompare(b.name));
     } else {
       this.states = ds.states.map((s) => ({ id: s.id, name: s.name_en, code: null, dbId: null, datasetId: s.id }));
       for (const s of this.states) this.stateById.set(s.id, s);

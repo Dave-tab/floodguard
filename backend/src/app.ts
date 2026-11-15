@@ -254,7 +254,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return {
       data: idx.states.map((s) => ({ id: s.id, name: s.name, code: s.code, isDemoData: false })),
       coverage: "national",
-      source: idx.source === "database" ? "FloodGuard database" : "Open Admin Data Nigeria (OCHA COD / INEC), CC BY 4.0",
+      source: idx.source === "database"
+        ? "FloodGuard database, completed with Open Admin Data Nigeria (OCHA COD / INEC), CC BY 4.0"
+        : "Open Admin Data Nigeria (OCHA COD / INEC), CC BY 4.0",
     };
   });
 

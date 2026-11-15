@@ -7,6 +7,18 @@ import {
   type CommunityPayload,
   type HazardReportPayload,
 } from '../../services/supabaseClient';
+import {
+  AdminAlert,
+  AdminLoadingState,
+  AdminRiskBadge,
+  AdminSectionHeader,
+  AdminStatusBadge,
+} from './AdminShared';
+import {
+  ADMIN_CATEGORY_LABELS,
+  formatAdminDate,
+  getAdminErrorMessage,
+} from './adminUtils';
 import AdminReportList from './AdminReportList';
 import CommunityRiskView from './CommunityRiskView';
 
@@ -39,52 +51,6 @@ interface DashboardData {
   metrics: DashboardMetrics;
   incidents: RecentIncident[];
   assessments: RecentAssessment[];
-}
-
-const STATUS_LABELS: Record<AdminReportStatus, string> = {
-  pending: 'Pending',
-  verified: 'Verified',
-  rejected: 'Rejected',
-};
-
-const STATUS_STYLES: Record<AdminReportStatus, string> = {
-  pending: 'bg-amber-50 text-amber-800',
-  verified: 'bg-brand-50 text-brand-800',
-  rejected: 'bg-red-50 text-red-800',
-};
-
-const RISK_STYLES: Record<AssessmentRiskLevel, string> = {
-  LOW: 'bg-emerald-50 text-emerald-800',
-  MODERATE: 'bg-amber-50 text-amber-800',
-  HIGH: 'bg-orange-50 text-orange-800',
-  CRITICAL: 'bg-red-50 text-red-800',
-};
-
-const CATEGORY_LABELS: Record<HazardReportPayload['hazard_category'], string> = {
-  blocked_drainage: 'Blocked drainage',
-  damaged_drainage: 'Damaged drainage',
-  flooded_road: 'Flooded road',
-  other: 'Other',
-  overflowing_waterway: 'Overflowing waterway',
-  rising_water_level: 'Rising water level',
-};
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'Date unavailable';
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : 'An unexpected error occurred while loading the dashboard.';
 }
 
 export default function AdminDashboard() {
@@ -252,8 +218,13 @@ export default function AdminDashboard() {
           assessmentTime: assessment.assessment_time,
         })),
       });
-    } catch (caught: unknown) {
-      setError(getErrorMessage(caught));
+    } catch (error: unknown) {
+      setError(
+        getAdminErrorMessage(
+          error,
+          'An unexpected error occurred while loading the dashboard.',
+        ),
+      );
     } finally {
       setIsLoading(false);
     }
@@ -266,18 +237,16 @@ export default function AdminDashboard() {
   return (
     <main className="min-h-screen bg-canvas text-brand-950">
       <div className="mx-auto max-w-7xl space-y-10 px-5 py-10 md:px-8">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-brand-600">
-              Environmental monitoring
-            </p>
-            <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-brand-950 md:text-4xl">
-              Monitoring overview
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-text-secondary md:text-base">
-              Current database summaries and recent community activity.
-            </p>
-          </div>
+        <AdminSectionHeader
+          className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+          description="Current database summaries and recent community activity."
+          descriptionClassName="mt-3 max-w-2xl text-sm leading-7 text-text-secondary md:text-base"
+          eyebrow="Environmental monitoring"
+          eyebrowClassName="text-xs font-bold uppercase tracking-[0.16em] text-brand-600"
+          headingLevel="h1"
+          title="Monitoring overview"
+          titleClassName="mt-3 text-3xl font-extrabold tracking-tight text-brand-950 md:text-4xl"
+        >
           <button
             className="inline-flex items-center justify-center self-start rounded-xl bg-brand-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-teal-950/10 transition hover:-translate-y-0.5 hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-teal-300 focus:ring-offset-2 focus:ring-offset-canvas sm:self-auto"
             onClick={() => void loadDashboard()}
@@ -285,13 +254,10 @@ export default function AdminDashboard() {
           >
             Refresh overview
           </button>
-        </header>
+        </AdminSectionHeader>
 
         {error && (
-          <div
-            className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-900"
-            role="alert"
-          >
+          <AdminAlert className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">
             <p>{error}</p>
             <button
               className="mt-3 font-semibold underline"
@@ -300,16 +266,15 @@ export default function AdminDashboard() {
             >
               Try again
             </button>
-          </div>
+          </AdminAlert>
         )}
 
         {isLoading ? (
-          <p
+          <AdminLoadingState
             className="rounded-3xl border border-border-soft bg-surface p-8 text-center text-sm text-text-secondary"
-            role="status"
           >
             Loading monitoring metrics…
-          </p>
+          </AdminLoadingState>
         ) : (
           <section
   aria-label="Platform monitoring metrics"
@@ -368,23 +333,22 @@ export default function AdminDashboard() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-bold text-brand-950">
-                            {CATEGORY_LABELS[incident.category]}
+                            {ADMIN_CATEGORY_LABELS[incident.category]}
                           </h3>
                           <p className="mt-1 text-sm text-text-secondary">
                             {incident.communityName}
                           </p>
                         </div>
-                        <span
-                          className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${STATUS_STYLES[incident.status]}`}
-                        >
-                          {STATUS_LABELS[incident.status]}
-                        </span>
+                        <AdminStatusBadge
+                          status={incident.status}
+                          variant="dashboard"
+                        />
                       </div>
                       <p className="mt-2 line-clamp-2 text-sm leading-6 text-text-secondary">
                         {incident.description}
                       </p>
                       <p className="mt-2 text-xs text-text-secondary">
-                        Submitted {formatDate(incident.submittedAt)}
+                        Submitted {formatAdminDate(incident.submittedAt)}
                       </p>
                     </li>
                   ))}
@@ -412,14 +376,10 @@ export default function AdminDashboard() {
                           {assessment.communityName}
                         </h3>
                         <p className="mt-1 text-xs text-text-secondary">
-                          Assessed {formatDate(assessment.assessmentTime)}
+                          Assessed {formatAdminDate(assessment.assessmentTime)}
                         </p>
                       </div>
-                      <span
-                        className={`rounded-full px-3 py-1.5 text-[11px] font-bold ${RISK_STYLES[assessment.riskLevel]}`}
-                      >
-                        {assessment.riskLevel}
-                      </span>
+                      <AdminRiskBadge riskLevel={assessment.riskLevel} />
                     </li>
                   ))}
                 </ul>
@@ -467,12 +427,12 @@ function MetricCard({
   value,
   description,
   valueClass,
-}: {
+}: Readonly<{
   label: string;
   value: number | string;
   description: string;
   valueClass: string;
-}) {
+}>) {
   return (
     <article className="rounded-2xl border border-border-soft bg-surface p-5 shadow-sm">
       <p className="text-sm font-semibold text-text-secondary">{label}</p>

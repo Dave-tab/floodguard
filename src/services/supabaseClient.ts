@@ -13,8 +13,6 @@ export type AssessmentRiskLevel =
   | 'HIGH'
   | 'CRITICAL';
 
-export type AlertSeverity = AssessmentRiskLevel;
-
 export type CommunityPayload = {
   id: string;
   community_name: string;
@@ -54,7 +52,7 @@ export type AlertPayload = {
   title: string;
   message: string;
   community_id: string | null;
-  severity: AlertSeverity;
+  severity: AssessmentRiskLevel;
   expires_at: string | null;
   source_type: string;
   issued_at: string;
@@ -91,8 +89,9 @@ const isValidSupabaseUrl = (() => {
   try {
     const url = new URL(supabaseUrl);
     return url.protocol === 'https:' || url.protocol === 'http:';
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
   }
 })();
 

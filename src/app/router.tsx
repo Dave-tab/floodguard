@@ -9,18 +9,24 @@ import { AuthPage } from '../features/auth/AuthPage';
 import { AlertsPage } from '../features/resident/AlertsPage';
 import { MyActivityPage } from '../features/resident/MyActivityPage';
 
+import AdminLayout from '../features/admin/AdminLayout';
+import AdminDashboard from '../features/admin/AdminDashboard';
+import AdminReportList from '../features/admin/AdminReportList';
+import CommunityRiskView from '../features/admin/CommunityRiskView';
+import EmergencyBroadcastForm from '../features/admin/EmergencyBroadcastForm';
+
 export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
         {/* Public resident experience */}
         <Route path="/" element={<ExplorePage />} />
-
         <Route
           path="/communities/:communityId"
           element={<CommunityOverviewPage />}
         />
 
+        {/* Resident routes */}
         <Route path="/hazard-map" element={<HazardMapPage />} />
 
         {/* Authentication */}
@@ -28,13 +34,12 @@ export function AppRouter() {
           path="/login"
           element={<AuthPage initialMode="login" />}
         />
-
         <Route
           path="/register"
           element={<AuthPage initialMode="register" />}
         />
 
-        {/* Temporary public access for frontend development */}
+        {/* Resident reporting */}
         <Route
           path="/report-hazard"
           element={<ReportHazardPage />}
@@ -43,12 +48,21 @@ export function AppRouter() {
         {/* Public alerts */}
         <Route path="/alerts" element={<AlertsPage />} />
 
-        {/* Temporary public access to preview My Activity */}
+        {/* Resident activity */}
         <Route
           path="/my-activity"
           element={<MyActivityPage />}
         />
 
+        {/* Admin frontend preview */}
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="reports" element={<AdminReportList />} />
+          <Route path="communities" element={<CommunityRiskView />} />
+          <Route path="broadcast" element={<EmergencyBroadcastForm />} />
+        </Route>
+
+        {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

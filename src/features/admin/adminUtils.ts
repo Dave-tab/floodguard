@@ -13,8 +13,6 @@ export const ADMIN_STATUS_LABELS: Record<HazardReportStatus, string> = {
   pending: 'Pending',
   verified: 'Verified',
   rejected: 'Rejected',
-  in_progress: 'In progress',
-  resolved: 'Resolved',
 };
 
 export function formatAdminDate(

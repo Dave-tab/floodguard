@@ -43,8 +43,6 @@ const ALLOWED_TRANSITIONS: Record<AdminReportStatus, readonly ActionableStatus[]
   pending: ['verified', 'rejected'],
   verified: [],
   rejected: [],
-  in_progress: [],
-  resolved: [],
 };
 
 const TRANSITION_BUTTON_STYLES: Record<ActionableStatus, string> = {

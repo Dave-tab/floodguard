@@ -13,8 +13,6 @@ const STATUS_BADGE_STYLES = {
       pending: 'bg-amber-50 text-amber-800',
       verified: 'bg-brand-50 text-brand-800',
       rejected: 'bg-red-50 text-red-800',
-      in_progress: 'bg-amber-50 text-amber-800',
-      resolved: 'bg-emerald-50 text-emerald-800',
     },
   },
   report: {
@@ -23,8 +21,6 @@ const STATUS_BADGE_STYLES = {
       pending: 'bg-amber-50 text-amber-800 ring-amber-600/20',
       verified: 'bg-brand-50 text-brand-800 ring-brand-100',
       rejected: 'bg-red-50 text-red-800 ring-red-600/20',
-      in_progress: 'bg-amber-50 text-amber-800 ring-amber-600/20',
-      resolved: 'bg-emerald-50 text-emerald-800 ring-emerald-600/20',
     },
   },
 } satisfies Record<

@@ -10,6 +10,7 @@ export interface AuthContextValue {
     displayName: string,
     email: string,
     password: string,
+    options?: { redirectPath?: string },
   ) => Promise<{ needsEmailConfirmation: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;

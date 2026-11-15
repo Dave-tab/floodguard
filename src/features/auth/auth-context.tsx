@@ -19,6 +19,7 @@ interface AuthContextValue {
     displayName: string,
     email: string,
     password: string,
+    options?: { redirectPath?: string },
   ) => Promise<{ needsEmailConfirmation: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     displayName: string,
     email: string,
     password: string,
+    options?: { redirectPath?: string },
   ) {
     if (!supabase) {
       throw new Error('Supabase has not been configured yet.');
@@ -80,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           full_name: displayName.trim(),
         },
         // Where the confirmation link returns to (must be an allowed redirect URL in Supabase).
-        emailRedirectTo: `${window.location.origin}/login`,
+        emailRedirectTo: `${window.location.origin}${options?.redirectPath ?? '/login'}`,
       },
     });
 

@@ -34,7 +34,7 @@ async function getAccessToken(): Promise<string | null> {
 }
 
 interface ApiRequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH';
   body?: unknown;
   /** When true the request fails with 401 before sending if nobody is signed in. */
   requireAuth?: boolean;

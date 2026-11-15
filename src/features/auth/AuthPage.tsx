@@ -1,7 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Droplets, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useAuth } from './useAuth';
+import {
+  RESUME_PATH,
+  browserStorage,
+  loadDraft,
+  safeInternalPath,
+} from '../resident/reportDraft';
 
 type AuthMode = 'login' | 'register';
 
@@ -24,12 +30,27 @@ export function AuthPage({ initialMode }: AuthPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as {
+  const [searchParams] = useSearchParams();
+  // A report saved on this device by a signed-out visitor (see reportDraft.ts).
+  const [hasDraft] = useState(() => loadDraft(browserStorage(), new Date()) !== null);
+
+  // Where to go after signing in: the page that sent the user here (router state or a
+  // same-site ?from= link), else their saved report, else their dashboard.
+  const stateFrom = (location.state as {
     from?: { pathname?: string; search?: string };
   } | null)?.from;
-  const destination = from?.pathname
-    ? `${from.pathname}${from.search ?? ''}`
-    : '/';
+  const statePath = stateFrom?.pathname
+    ? `${stateFrom.pathname}${stateFrom.search ?? ''}`
+    : null;
+  const queryFrom = safeInternalPath(searchParams.get('from'));
+  const queryPath =
+    queryFrom && searchParams.get('resume') === '1' && !queryFrom.includes('?')
+      ? `${queryFrom}?resume=1`
+      : queryFrom;
+  const explicitDestination = statePath ?? queryPath;
+  const fallbackDestination = hasDraft ? RESUME_PATH : '/dashboard';
+  const destination = explicitDestination ?? fallbackDestination;
+  const returningToDraft = destination === RESUME_PATH;
 
  useEffect(() => {
   if (user) {
@@ -68,11 +89,20 @@ export function AuthPage({ initialMode }: AuthPageProps) {
 
     try {
       if (mode === 'register') {
-        const result = await signUp(displayName, email.trim(), password);
+        // The confirmation link brings the user back to sign-in, then on to `destination`.
+        const redirectPath =
+          destination === '/dashboard'
+            ? '/login'
+            : `/login?from=${encodeURIComponent(destination)}`;
+        const result = await signUp(displayName, email.trim(), password, {
+          redirectPath,
+        });
 
         if (result.needsEmailConfirmation) {
           setMessage(
-            `Almost done: we sent a confirmation link to ${email.trim()}. Open it to activate your account, then sign in here. You are not signed in yet.`,
+            returningToDraft
+              ? `Almost done: we sent a confirmation link to ${email.trim()}. Open it to activate your account, then sign in. Your report is still saved on this device and has not been sent yet: after you sign in you will be taken back to it to submit.`
+              : `Almost done: we sent a confirmation link to ${email.trim()}. Open it to activate your account, then sign in here. You are not signed in yet.`,
           );
           setMode('login');
           setPassword('');
@@ -160,6 +190,13 @@ export function AuthPage({ initialMode }: AuthPageProps) {
             <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
               Supabase is not connected yet. Authentication will
               become available after project configuration.
+            </div>
+          )}
+
+          {returningToDraft && !message && (
+            <div role="status" className="mb-5 rounded-xl border border-brand-100 bg-brand-50 p-4 text-sm leading-6 text-brand-900">
+              Your hazard report is saved on this device but has not been sent yet. Sign in or
+              create an account, then you will be taken back to it to submit.
             </div>
           )}
 

@@ -10,6 +10,7 @@ import { AdminRoute } from '../features/auth/AdminRoute';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { AlertsPage } from '../features/resident/AlertsPage';
 import { MyActivityPage } from '../features/resident/MyActivityPage';
+import { UserDashboardPage } from '../features/resident/UserDashboardPage';
 
 import AdminLayout from '../features/admin/AdminLayout';
 import AdminDashboard from '../features/admin/AdminDashboard';
@@ -41,18 +42,21 @@ export function AppRouter() {
           element={<AuthPage initialMode="register" />}
         />
 
-        {/* Resident reporting */}
-        <Route
-          path="/report-hazard"
-          element={
-            <ProtectedRoute>
-              <ReportHazardPage />
-            </ProtectedRoute>
-          }
-        />
+        {/* Resident reporting: anyone can fill the form; sending it requires sign-in */}
+        <Route path="/report-hazard" element={<ReportHazardPage />} />
 
         {/* Public alerts */}
         <Route path="/alerts" element={<AlertsPage />} />
+
+        {/* Signed-in resident dashboard */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <UserDashboardPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Resident activity */}
         <Route

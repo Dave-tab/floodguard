@@ -1,15 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 
-import { getCurrentUser } from '../../services/reportService';
-import { useAuth } from './useAuth';
-
-type AdminCheck =
-  | { state: 'checking' }
-  | { state: 'admin' }
-  | { state: 'denied' }
-  | { state: 'error'; message: string };
+import { useCurrentUser } from './useCurrentUser';
 
 function CenteredMessage({ children }: Readonly<{ children: ReactNode }>) {
   return (
@@ -26,37 +19,10 @@ function CenteredMessage({ children }: Readonly<{ children: ReactNode }>) {
  * convenience for the interface: the API enforces the same rule on every admin request.
  */
 export function AdminRoute({ children }: Readonly<{ children: ReactNode }>) {
-  const { user, loading } = useAuth();
+  const { authLoading, signedIn, status, me, error } = useCurrentUser();
   const location = useLocation();
-  const [check, setCheck] = useState<AdminCheck>({ state: 'checking' });
-  const userId = user?.id ?? null;
 
-  useEffect(() => {
-    if (!userId) return;
-    let active = true;
-
-    getCurrentUser()
-      .then((me) => {
-        if (active) setCheck(me.role === 'admin' ? { state: 'admin' } : { state: 'denied' });
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setCheck({
-            state: 'error',
-            message:
-              error instanceof Error
-                ? error.message
-                : 'Unable to confirm your account role.',
-          });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [userId]);
-
-  if (loading) {
+  if (authLoading) {
     return (
       <CenteredMessage>
         <p className="text-sm text-text-secondary">Checking your account…</p>
@@ -64,11 +30,11 @@ export function AdminRoute({ children }: Readonly<{ children: ReactNode }>) {
     );
   }
 
-  if (!user) {
+  if (!signedIn) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (check.state === 'checking') {
+  if (status === 'loading' && !me) {
     return (
       <CenteredMessage>
         <p className="text-sm text-text-secondary">Confirming administrator access…</p>
@@ -76,20 +42,20 @@ export function AdminRoute({ children }: Readonly<{ children: ReactNode }>) {
     );
   }
 
-  if (check.state === 'admin') return <>{children}</>;
+  if (me?.role === 'admin') return <>{children}</>;
+
+  const denied = status !== 'error';
 
   return (
     <CenteredMessage>
       <ShieldAlert className="mx-auto h-10 w-10 text-amber-600" />
       <h1 className="mt-4 text-xl font-extrabold text-brand-950">
-        {check.state === 'denied'
-          ? 'Administrator access required'
-          : 'Unable to confirm access'}
+        {denied ? 'Administrator access required' : 'Unable to confirm access'}
       </h1>
       <p className="mt-3 text-sm leading-6 text-text-secondary">
-        {check.state === 'denied'
+        {denied
           ? 'Your account does not have administrator access. Administrator roles are assigned by the FloodGuard team.'
-          : check.message}
+          : error}
       </p>
       <Link
         to="/"

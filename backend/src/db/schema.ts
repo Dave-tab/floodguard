@@ -107,7 +107,7 @@ export interface RiskRow {
   created_at?: string | null;
 }
 export type RiskInsert = Omit<RiskRow, "id" | "created_at">;
-export interface ProfileRow { id: string; full_name: string | null; role: DbRole | string }
+export interface ProfileRow { id: string; full_name: string | null; role: DbRole | string; preferred_community_id: string | null }
 export interface AlertRow {
   id: string;
   community_id: string | null;

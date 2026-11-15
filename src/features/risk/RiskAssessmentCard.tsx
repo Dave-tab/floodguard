@@ -36,6 +36,10 @@ const levelStyles: Record<
     label: 'High',
     classes: 'bg-orange-100 text-orange-800',
   },
+  severe: {
+    label: 'Severe',
+    classes: 'bg-red-50 text-red-700',
+  },
   critical: {
     label: 'Critical',
     classes: 'bg-red-100 text-red-800',

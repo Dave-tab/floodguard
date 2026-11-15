@@ -70,6 +70,8 @@ export interface Db {
   getProfile(userId: string): Promise<ProfileRow | null>;
   /** Creates the profile row if it does not exist yet. Never changes an existing row (role included). */
   ensureProfile(userId: string, fullName: string | null): Promise<void>;
+  /** Sets ONLY profiles.preferred_community_id for this user (secret key; users have no UPDATE grant). */
+  setPreferredCommunity(userId: string, communityId: string | null): Promise<void>;
   countReports(status?: DbReportStatus): Promise<number | null>;
   /** Alerts that have not expired at `at`; with communityId, that community's plus platform-wide ones. */
   listActiveAlerts(f: { at: string; communityId?: string; limit?: number }): Promise<AlertRow[]>;
@@ -78,7 +80,7 @@ export interface Db {
   latestRiskAssessment(communityId: string): Promise<RiskRow | null>;
 }
 
-export interface AuthUser { id: string; fullName?: string | null }
+export interface AuthUser { id: string; fullName?: string | null; email?: string | null }
 
 export interface AuthVerifier {
   /** Returns the user for a valid Supabase access token, otherwise null. */
@@ -213,7 +215,7 @@ export class SupabaseDb implements Db {
 
   async getProfile(userId: string) {
     if (!isUuid(userId)) return null;
-    const { data, error } = await this.sb.from(T.profiles).select("id,full_name,role").eq("id", userId).maybeSingle();
+    const { data, error } = await this.sb.from(T.profiles).select("id,full_name,role,preferred_community_id").eq("id", userId).maybeSingle();
     if (error) fail("profile", error);
     return (data as unknown as ProfileRow) ?? null;
   }
@@ -223,6 +225,13 @@ export class SupabaseDb implements Db {
     // Insert only: role is left to its database default (RESIDENT) and is never written here.
     const { error } = await this.sb.from(T.profiles).insert({ id: userId, full_name: fullName });
     if (error && error.code !== "23505") fail("create profile", error);
+  }
+
+  async setPreferredCommunity(userId: string, communityId: string | null) {
+    if (!isUuid(userId)) throw new DbError("update profile", undefined, "invalid user id");
+    // Only this one column is ever written; role and name are untouched.
+    const { error } = await this.sb.from(T.profiles).update({ preferred_community_id: communityId }).eq("id", userId);
+    if (error) fail("update profile", error);
   }
 
   async countReports(status?: DbReportStatus) {
@@ -275,6 +284,6 @@ export class SupabaseAuth implements AuthVerifier {
     if (error || !data.user) return null;
     const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
     const name = [meta.display_name, meta.full_name, meta.name].find((v): v is string => typeof v === "string" && v.trim() !== "");
-    return { id: data.user.id, fullName: name?.trim().slice(0, 120) ?? null };
+    return { id: data.user.id, fullName: name?.trim().slice(0, 120) ?? null, email: data.user.email ?? null };
   }
 }

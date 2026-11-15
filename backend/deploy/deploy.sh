@@ -13,11 +13,11 @@ ENV_FILE=/etc/floodguard/backend.env
 PORT=$(grep -E '^PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || true)
 PORT=${PORT:-8080}
 
-[ "$(id -u)" -eq 0 ] || { echo "Run as root."; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Run as root."; exit 1; }
 as_app() { sudo -u "$APP_USER" -H "$@"; }
 
 echo "==> Code: $REPO ($BRANCH)"
-if [ ! -d "$APP_DIR/.git" ]; then
+if [[ ! -d "$APP_DIR/.git" ]]; then
   as_app git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
 else
   as_app git -C "$APP_DIR" fetch --depth 1 origin "$BRANCH"

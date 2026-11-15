@@ -14,7 +14,7 @@ ENV_FILE=/etc/floodguard/backend.env
 PORT=8080
 
 log() { printf '\n==> %s\n' "$*"; }
-[ "$(id -u)" -eq 0 ] || { echo "Run as root."; exit 1; }
+[[ "$(id -u)" -eq 0 ]] || { echo "Run as root."; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
 log "System packages"
@@ -22,9 +22,9 @@ apt-get update -y
 apt-get install -y nginx ufw git curl ca-certificates gnupg
 
 log "Node.js 22"
-if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+if ! command -v node >/dev/null || [[ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]]; then
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  curl --proto '=https' --tlsv1.2 -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
@@ -39,7 +39,7 @@ install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR" "$APP_DIR/cache"
 install -d -m 0750 -o root -g "$APP_USER" /etc/floodguard
 
 log "Environment file (secrets are typed in on the server, never committed)"
-if [ ! -f "$ENV_FILE" ]; then
+if [[ ! -f "$ENV_FILE" ]]; then
   cat > "$ENV_FILE" <<ENV
 PORT=$PORT
 SUPABASE_URL=

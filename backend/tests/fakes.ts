@@ -179,7 +179,7 @@ export const RAIN = {
 
 /** Fake pipeline: the rain preset controls the result; no network. */
 export function fakePipeline(state: { rain: keyof typeof RAIN; calls: number }) {
-  return async (c: Community, o: { now?: string; observations?: Observation[]; unverifiedSignals?: UnverifiedSignal[] } | undefined): Promise<PipelineResult> => {
+  return (c: Community, o: { now?: string; observations?: Observation[]; unverifiedSignals?: UnverifiedSignal[] } | undefined): Promise<PipelineResult> => {
     state.calls++;
     const now = o?.now ?? NOW.toISOString();
     const r = RAIN[state.rain];
@@ -189,7 +189,7 @@ export function fakePipeline(state: { rain: keyof typeof RAIN; calls: number }) 
       antecedent: { ...prov, observedAt: now, past72hMm: r.past72hMm, past7dMm: r.past7dMm, soilMoisture: null },
       riverDischarge: null, riverGauge: null, observations: o?.observations ?? [], unverifiedSignals: o?.unverifiedSignals,
     });
-    return { assessment, weather: null, forecast: null, errors: [] };
+    return Promise.resolve({ assessment, weather: null, forecast: null, errors: [] });
   };
 }
 
@@ -203,7 +203,7 @@ export async function setup(opts: { explain?: Explainer | null; now?: () => Date
   const now = opts.now ?? (() => NOW);
   const budget = new OpenMeteoBudget(8000, store, now);
   const failingFetch = (async () => { throw new Error("no network in tests"); }) as unknown as typeof fetch;
-  const climatology = new ClimatologyService(store, budget, { fetchImpl: failingFetch, loadPilots: async () => ({ ikorodu: CLIM }), now });
+  const climatology = new ClimatologyService(store, budget, { fetchImpl: failingFetch, loadPilots: () => Promise.resolve({ ikorodu: CLIM }), now });
   const pipe: { rain: keyof typeof RAIN; calls: number } = { rain: "dry", calls: 0 };
   const explainCalls: string[] = [];
   const explain: Explainer | null = opts.explain === undefined

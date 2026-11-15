@@ -76,8 +76,8 @@ const resolveSchema = z.object({
 
 function bearer(req: FastifyRequest): string | null {
   const h = req.headers.authorization;
-  const m = h ? /^Bearer\s+(.+)$/i.exec(h) : null;
-  return m?.[1]?.trim() || null;
+  if (!h || h.slice(0, 7).toLowerCase() !== "bearer ") return null;
+  return h.slice(7).trim() || null;
 }
 
 /** Rows from the database are only exposed through these mappers. */
@@ -205,7 +205,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return true;
   };
 
-  app.get("/health", async () => ({ status: "ok", time: now().toISOString() }));
+  app.get("/health", (_req, reply) => reply.send({ status: "ok", time: now().toISOString() }));
 
   // ---- Signed-in user ----
   app.get("/me", async (req) => {
@@ -373,8 +373,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   // ---- Safety and platform ----
-  app.get("/safety/guidelines", async () => ({ data: SAFETY_GUIDELINES }));
-  app.get("/safety/hotlines", async () => ({ data: [] }));
+  app.get("/safety/guidelines", (_req, reply) => reply.send({ data: SAFETY_GUIDELINES }));
+  app.get("/safety/hotlines", (_req, reply) => reply.send({ data: [] }));
   app.get("/platform/impact", async () => ({
     data: {
       isDemoData: false,

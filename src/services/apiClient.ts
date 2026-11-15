@@ -5,7 +5,13 @@ import { supabase } from '../lib/supabase';
  * operation that needs authorisation (reports, admin) goes through the API, which checks
  * the Supabase access token and the user's role on the server.
  */
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
+}
+
+const API_BASE_URL = trimTrailingSlashes(import.meta.env.VITE_API_BASE_URL ?? '');
 
 export class ApiError extends Error {
   readonly status: number;

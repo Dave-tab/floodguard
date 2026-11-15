@@ -43,7 +43,7 @@ export class Scheduler {
   }
 
   stop() {
-    this.timers.forEach(clearInterval);
+    for (const t of this.timers) clearInterval(t);
     this.timers = [];
   }
 

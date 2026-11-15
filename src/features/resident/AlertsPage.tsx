@@ -342,7 +342,7 @@ const filteredAlerts = allAlerts.filter((alert) => {
               {activeAlerts.length}
             </p>
             <p className="mt-1 text-xs text-text-secondary">
-              Published demonstration records
+              {IS_LIVE ? 'Notices currently in effect' : 'Published demonstration records'}
             </p>
           </div>
 
@@ -357,7 +357,7 @@ const filteredAlerts = allAlerts.filter((alert) => {
               {aiAlertCount}
             </p>
             <p className="mt-1 text-xs text-text-secondary">
-              Sample predictions reviewed by admins
+              {IS_LIVE ? 'Risk predictions reviewed by admins' : 'Sample predictions reviewed by admins'}
             </p>
           </div>
 
@@ -372,7 +372,7 @@ const filteredAlerts = allAlerts.filter((alert) => {
               {adminAlertCount}
             </p>
             <p className="mt-1 text-xs text-text-secondary">
-              Sample community notices
+              {IS_LIVE ? 'Community notices from FloodGuard admins' : 'Sample community notices'}
             </p>
           </div>
         </section>

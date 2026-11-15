@@ -18,10 +18,35 @@ type CategoryFilter = 'all' | HazardCategory;
 const STATUS_OPTIONS: AdminReportStatus[] = [
   'pending',
   'verified',
-  'in_progress',
-  'resolved',
   'rejected',
 ];
+
+const STATUS_LABELS: Record<AdminReportStatus, string> = {
+  pending: 'Pending',
+  verified: 'Verified',
+  rejected: 'Rejected',
+};
+
+const TRANSITION_ACTION_LABELS: Record<AdminReportStatus, string> = {
+  pending: 'Pending',
+  verified: 'Verify',
+  rejected: 'Reject',
+};
+
+const STATUS_STYLES: Record<AdminReportStatus, string> = {
+  pending: 'bg-amber-50 text-amber-800 ring-amber-600/20',
+  verified: 'bg-brand-50 text-brand-800 ring-brand-100',
+  rejected: 'bg-red-50 text-red-800 ring-red-600/20',
+};
+
+const ALLOWED_TRANSITIONS: Record<
+  AdminReportStatus,
+  readonly AdminReportStatus[]
+> = {
+  pending: ['verified', 'rejected'],
+  verified: [],
+  rejected: [],
+};
 
 const CATEGORY_LABELS: Record<HazardCategory, string> = {
   blocked_drainage: 'Blocked drainage',
@@ -32,40 +57,7 @@ const CATEGORY_LABELS: Record<HazardCategory, string> = {
   rising_water_level: 'Rising water level',
 };
 
-const STATUS_LABELS: Record<AdminReportStatus, string> = {
-  pending: 'Pending',
-  verified: 'Verified',
-  in_progress: 'In Progress',
-  resolved: 'Resolved',
-  rejected: 'Rejected',
-};
 
-const TRANSITION_ACTION_LABELS: Record<AdminReportStatus, string> = {
-  pending: 'Pending',
-  verified: 'Verify',
-  in_progress: 'Mark in progress',
-  resolved: 'Resolve',
-  rejected: 'Reject',
-};
-
-const STATUS_STYLES: Record<AdminReportStatus, string> = {
-  pending: 'bg-amber-50 text-amber-800 ring-amber-600/20',
-  verified: 'bg-brand-50 text-brand-800 ring-brand-100',
-  in_progress: 'bg-brand-100 text-brand-900 ring-brand-100',
-  resolved: 'bg-slate-100 text-slate-700 ring-slate-500/20',
-  rejected: 'bg-red-50 text-red-800 ring-red-600/20',
-};
-
-const ALLOWED_TRANSITIONS: Record<
-  AdminReportStatus,
-  readonly AdminReportStatus[]
-> = {
-  pending: ['verified', 'rejected'],
-  verified: ['in_progress', 'resolved'],
-  in_progress: ['resolved'],
-  resolved: [],
-  rejected: [],
-};
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -126,8 +118,9 @@ export default function AdminReportList() {
     setError(null);
 
     if (!supabase) {
+      setReports([]);
       setError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to load reports.',
+        'Preview mode: connect the backend to load and review submitted community reports.',
       );
       setIsLoading(false);
       return;
@@ -228,9 +221,9 @@ export default function AdminReportList() {
     setBusyReportId(report.id);
 
     if (!supabase) {
-      setActionError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY before updating reports.',
-      );
+     setActionError(
+  'Preview mode: report status changes are unavailable until backend integration is complete.',
+);
       setBusyReportId(null);
       return;
     }

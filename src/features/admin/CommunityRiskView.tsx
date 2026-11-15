@@ -72,13 +72,12 @@ export default function CommunityRiskView() {
     setIsLoadingCommunities(true);
     setCommunityError(null);
 
-    if (!supabase) {
-      setCommunityError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to load communities.',
-      );
-      setIsLoadingCommunities(false);
-      return;
-    }
+   if (!supabase) {
+  setCommunities([]);
+  setCommunityError(null);
+  setIsLoadingCommunities(false);
+  return;
+}
 
     try {
       const result = await supabase
@@ -232,7 +231,9 @@ export default function CommunityRiskView() {
         </p>
       ) : !communityError && !selectedCommunity ? (
         <p className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
-          No communities are available to monitor.
+         {!supabase
+  ? 'Community risk preview is ready. Connect the backend to load communities and their stored risk assessments.'
+  : 'No communities are currently available to monitor.'}
         </p>
       ) : selectedCommunity ? (
         <>

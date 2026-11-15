@@ -1,13 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
-import {
-  CheckCircle2,
-  Clock3,
-  FileText,
-  MapPin,
-  ShieldCheck,
-  TriangleAlert,
-} from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   supabase,
@@ -25,7 +16,6 @@ interface DashboardMetrics {
   totalReports: number;
   pendingReports: number;
   verifiedReports: number;
-  resolvedReports: number;
 }
 
 interface RecentIncident {
@@ -54,16 +44,12 @@ interface DashboardData {
 const STATUS_LABELS: Record<AdminReportStatus, string> = {
   pending: 'Pending',
   verified: 'Verified',
-  in_progress: 'In Progress',
-  resolved: 'Resolved',
   rejected: 'Rejected',
 };
 
 const STATUS_STYLES: Record<AdminReportStatus, string> = {
   pending: 'bg-amber-50 text-amber-800',
   verified: 'bg-brand-50 text-brand-800',
-  in_progress: 'bg-brand-100 text-brand-900',
-  resolved: 'bg-slate-100 text-slate-700',
   rejected: 'bg-red-50 text-red-800',
 };
 
@@ -95,44 +81,6 @@ function formatDate(value: string): string {
     timeStyle: 'short',
   }).format(date);
 }
-
-function MetricCard({
-  label,
-  value,
-  tone,
-  icon: Icon,
-}: {
-  label: string;
-  value: number | string;
-  tone: 'slate' | 'amber' | 'green' | 'red';
-  icon: LucideIcon;
-}) {
-  const iconTones = {
-    slate: 'bg-brand-50 text-brand-600',
-    amber: 'bg-amber-50 text-amber-700',
-    green: 'bg-emerald-50 text-emerald-700',
-    red: 'bg-red-50 text-red-700',
-  } satisfies Record<typeof tone, string>;
-
-  return (
-    <article className="rounded-3xl border border-border-soft bg-surface p-6 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-sm font-semibold text-text-secondary">{label}</h2>
-          <p className="mt-4 text-4xl font-extrabold tabular-nums text-brand-950">
-            {value}
-          </p>
-        </div>
-        <div
-          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${iconTones[tone]}`}
-        >
-          <Icon aria-hidden="true" className="h-5 w-5" />
-        </div>
-      </div>
-    </article>
-  );
-}
-
 function getErrorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -163,25 +111,26 @@ export default function AdminDashboard() {
           .from('communities')
           .select('id', { count: 'exact', head: true })
           .eq('is_active', true),
+
         supabase
           .from('risk_assessments')
           .select('id', { count: 'exact', head: true })
           .in('risk_level', ['HIGH', 'CRITICAL']),
+
         supabase
           .from('hazard_reports')
           .select('id', { count: 'exact', head: true }),
+
         supabase
           .from('hazard_reports')
           .select('id', { count: 'exact', head: true })
           .eq('status', 'pending'),
+
         supabase
           .from('hazard_reports')
           .select('id', { count: 'exact', head: true })
           .eq('status', 'verified'),
-        supabase
-          .from('hazard_reports')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'resolved'),
+
         supabase
           .from('hazard_reports')
           .select(
@@ -189,6 +138,7 @@ export default function AdminDashboard() {
           )
           .order('submitted_at', { ascending: false })
           .limit(6),
+
         supabase
           .from('risk_assessments')
           .select('*')
@@ -196,9 +146,17 @@ export default function AdminDashboard() {
           .limit(5),
       ]);
 
-      const [communitiesCount, highRiskCount, totalReportsCount, pendingCount,
-        verifiedCount, resolvedCount, incidentsResult, assessmentsResult] =
-        results;
+      const [
+        communitiesCount,
+        highRiskCount,
+        totalReportsCount,
+        pendingCount,
+        verifiedCount,
+        incidentsResult,
+        assessmentsResult,
+      ] = results;
+
+
 
       const queryErrors: string[] = [];
 
@@ -219,9 +177,7 @@ export default function AdminDashboard() {
       if (verifiedCount.error) {
         queryErrors.push(`verified report count: ${verifiedCount.error.message}`);
       }
-      if (resolvedCount.error) {
-        queryErrors.push(`resolved report count: ${resolvedCount.error.message}`);
-      }
+    
       if (incidentsResult.error) {
         queryErrors.push(`recent hazard reports: ${incidentsResult.error.message}`);
       }
@@ -277,7 +233,6 @@ export default function AdminDashboard() {
           totalReports: totalReportsCount.count ?? 0,
           pendingReports: pendingCount.count ?? 0,
           verifiedReports: verifiedCount.count ?? 0,
-          resolvedReports: resolvedCount.count ?? 0,
         },
         incidents: incidents.map((report) => ({
           id: report.id,
@@ -357,55 +312,40 @@ export default function AdminDashboard() {
           </p>
         ) : (
           <section
-            aria-label="Monitoring metrics"
-            className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
-          >
-            <MetricCard
-              label="Monitored communities"
-              value={data?.metrics.communities ?? 'Unavailable'}
-              tone="slate"
-              icon={MapPin}
-            />
-            <MetricCard
-              label="High or critical assessments"
-              value={
-                data?.metrics.highRiskAssessments ??
-                'Unavailable'
-              }
-              tone="red"
-              icon={TriangleAlert}
-            />
-            <MetricCard
-              label="Total reports"
-              value={data?.metrics.totalReports ?? 'Unavailable'}
-              tone="slate"
-              icon={FileText}
-            />
-            <MetricCard
-              label="Pending reports"
-              value={
-                data?.metrics.pendingReports ?? 'Unavailable'
-              }
-              tone="amber"
-              icon={Clock3}
-            />
-            <MetricCard
-              label="Verified reports"
-              value={
-                data?.metrics.verifiedReports ?? 'Unavailable'
-              }
-              tone="green"
-              icon={ShieldCheck}
-            />
-            <MetricCard
-              label="Resolved reports"
-              value={
-                data?.metrics.resolvedReports ?? 'Unavailable'
-              }
-              tone="slate"
-              icon={CheckCircle2}
-            />
-          </section>
+  aria-label="Platform monitoring metrics"
+  className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5"
+>
+  <MetricCard
+    label="Communities"
+    value={data?.metrics.communities ?? 'Unavailable'}
+    description="Registered communities"
+    valueClass="text-brand-950"
+  />
+  <MetricCard
+    label="High-risk communities"
+    value={data?.metrics.highRiskAssessments ?? 'Unavailable'}
+    description="Assessments classified high or critical"
+    valueClass="text-red-700"
+  />
+  <MetricCard
+    label="Total reports"
+    value={data?.metrics.totalReports ?? 'Unavailable'}
+    description="Submitted hazard reports"
+    valueClass="text-brand-950"
+  />
+  <MetricCard
+    label="Pending reports"
+    value={data?.metrics.pendingReports ?? 'Unavailable'}
+    description="Awaiting review"
+    valueClass="text-amber-700"
+  />
+  <MetricCard
+    label="Verified reports"
+    value={data?.metrics.verifiedReports ?? 'Unavailable'}
+    description="Confirmed by an administrator"
+    valueClass="text-emerald-700"
+  />
+</section>
         )}
 
         {data && (
@@ -519,5 +459,29 @@ export default function AdminDashboard() {
         </section>
       </div>
     </main>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+  valueClass,
+}: {
+  label: string;
+  value: number | string;
+  description: string;
+  valueClass: string;
+}) {
+  return (
+    <article className="rounded-2xl border border-border-soft bg-surface p-5 shadow-sm">
+      <p className="text-sm font-semibold text-text-secondary">{label}</p>
+      <p className={`mt-3 text-3xl font-extrabold tracking-tight ${valueClass}`}>
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-text-secondary">
+        {description}
+      </p>
+    </article>
   );
 }

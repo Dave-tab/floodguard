@@ -1,73 +1,77 @@
-
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { CommunityOverviewPage } from '../features/community/CommunityOverviewPage';
 import { ExplorePage } from '../features/resident/ExplorePage';
 import { ModulePlaceholderPage } from '../features/resident/ModulePlaceholderPage';
 
+import AdminLayout from '../features/admin/AdminLayout';
+import AdminDashboard from '../features/admin/AdminDashboard';
+import AdminReportList from '../features/admin/AdminReportList';
+import CommunityRiskView from '../features/admin/CommunityRiskView';
+import EmergencyBroadcastForm from '../features/admin/EmergencyBroadcastForm';
+
 export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* FE1: Public resident experience */}
+        {/* Public resident experience */}
         <Route path="/" element={<ExplorePage />} />
-
         <Route
           path="/communities/:communityId"
           element={<CommunityOverviewPage />}
         />
 
-        {/* FE2: Hazard map */}
-        <Route
-          path="/hazard-map"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Hazard Map"
-              title="Interactive Verified Hazard Map"
-              description="The interactive hazard map and verified incident filtering workflow will be available here."
-              ownerLabel="FE2 Integration Point"
-            />
-          }
-        />
-
-        {/* FE2: Hazard reporting */}
-        <Route
-          path="/report-hazard"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Report Hazard"
-              title="Resident Hazard Reporting"
-              description="This area is reserved for authenticated residents to submit hazard reports for administrative review."
-              ownerLabel="FE2 Integration Point"
-            />
-          }
-        />
-
-        {/* Team integration: Alerts */}
-        <Route
-          path="/alerts"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Alerts"
-              title="Community Alerts and Notices"
-              description="This area is reserved for weather information and authorised community notices."
-              ownerLabel="Team Integration Point"
-            />
-          }
-        />
-
-        {/* Team integration: Resident activity */}
-        <Route
-          path="/my-activity"
-          element={
-            <ModulePlaceholderPage
-              subtitle="Activity"
-              title="Resident Activity"
-              description="This area is reserved for authenticated resident account access and private report tracking."
-              ownerLabel="Team Integration Point"
-            />
-          }
-        />
+       <Route
+  path="/hazard-map"
+  element={
+    <ModulePlaceholderPage
+      title="Hazard map"
+      subtitle="Explore reported hazards and community flood risk."
+      description="Explore reported hazards and community flood risk."
+      ownerLabel="Resident experience"
+    />
+  }
+/>
+<Route
+  path="/report-hazard"
+  element={
+    <ModulePlaceholderPage
+      title="Report a hazard"
+      subtitle="Share a flood-related observation with your community."
+      description="Share a flood-related observation with your community."
+      ownerLabel="Resident experience"
+    />
+  }
+/>
+<Route
+  path="/alerts"
+  element={
+    <ModulePlaceholderPage
+      title="Alerts"
+      subtitle="View important community safety notices."
+      description="View important community safety notices."
+      ownerLabel="Resident experience"
+    />
+  }
+/>
+<Route
+  path="/my-activity"
+  element={
+    <ModulePlaceholderPage
+      title="My activity"
+      subtitle="Review your submitted reports and activity."
+      description="Review your submitted reports and activity."
+      ownerLabel="Resident experience"
+    />
+  }
+/>
+        {/* Admin frontend preview */}
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="reports" element={<AdminReportList />} />
+          <Route path="communities" element={<CommunityRiskView />} />
+          <Route path="broadcast" element={<EmergencyBroadcastForm />} />
+        </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -81,9 +81,7 @@ export default function EmergencyBroadcastForm() {
     setCommunityError(null);
 
     if (!supabase) {
-      setCommunityError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to load communities.',
-      );
+      setCommunities([]);
       setIsLoadingCommunities(false);
       return;
     }
@@ -113,12 +111,11 @@ export default function EmergencyBroadcastForm() {
     setBroadcastError(null);
 
     if (!supabase) {
-      setBroadcastError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to load broadcasts.',
-      );
-      setIsLoadingBroadcasts(false);
-      return;
-    }
+  setCommunities([]);
+  setCommunityError(null);
+  setIsLoadingCommunities(false);
+  return;
+}
 
     try {
       const result = await supabase
@@ -231,12 +228,11 @@ export default function EmergencyBroadcastForm() {
     }
 
     if (!supabase) {
-      setSubmitError(
-        'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY before submitting.',
-      );
-      return;
-    }
-
+  setBroadcasts([]);
+  setBroadcastError(null);
+  setIsLoadingBroadcasts(false);
+  return;
+}
     setIsSubmitting(true);
 
     try {
@@ -296,20 +292,21 @@ export default function EmergencyBroadcastForm() {
         <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
           Emergency broadcast
         </h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-          Send a time-limited community notice. Broadcasts are informational
-          notices and are not a substitute for official emergency alerts.
-        </p>
+        <p className="mt-5 rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-600">
+  {!supabase
+    ? 'Preview mode: administrator broadcast history will appear here after backend integration.'
+    : 'No administrator broadcasts are available.'}
+</p>
       </header>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">
         <form
           className="space-y-5 rounded-xl border border-red-200 bg-white p-5 shadow-sm sm:p-6"
-          onSubmit={(event) => void submitBroadcast(event)}
+          onSubmit={submitBroadcast}
         >
           <div className="border-b border-red-100 pb-4">
             <h3 className="text-lg font-semibold text-slate-900">
-              Create a broadcast
+              Compose an emergency notice
             </h3>
             <p className="mt-1 text-sm text-slate-600">
               Choose the affected area, severity, and expiry time.

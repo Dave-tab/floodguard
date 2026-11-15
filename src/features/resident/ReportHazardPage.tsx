@@ -1,5 +1,5 @@
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -9,8 +9,12 @@ import {
   Clock3,
   Crosshair,
   Droplets,
+  LogIn,
   MapPin,
+  Save,
   ShieldCheck,
+  UserPlus,
+  X,
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 
@@ -18,6 +22,15 @@ import { ResidentShell } from '../../components/layout/ResidentShell';
 import { listActiveCommunities } from '../../services/residentService';
 import { submitReport, type OwnReport } from '../../services/reportService';
 import type { Community, HazardCategory } from '../../types/resident';
+import { useAuth } from '../auth/useAuth';
+import {
+  authLinkForDraft,
+  browserStorage,
+  buildDraft,
+  clearDraft,
+  loadDraft,
+  saveDraft,
+} from './reportDraft';
 
 const HAZARD_CATEGORIES: {
   value: HazardCategory;
@@ -75,6 +88,85 @@ function composeDescription(description: string, locationDetails: string): strin
     : description.trim();
 }
 
+/** Shown when a signed-out visitor presses Submit: the report is kept on this device only. */
+function SignInToSendDialog({
+  saved,
+  onClose,
+}: Readonly<{ saved: boolean; onClose: () => void }>) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-brand-950/40 p-4 sm:items-center">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sign-in-to-send-title"
+        aria-describedby="sign-in-to-send-text"
+        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2
+            id="sign-in-to-send-title"
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-lg font-extrabold text-brand-950 focus:outline-none"
+          >
+            Sign in to send your report
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close and keep editing"
+            className="rounded-lg p-1 text-text-secondary hover:bg-canvas"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p id="sign-in-to-send-text" className="mt-3 text-sm leading-6 text-text-secondary">
+          {saved
+            ? 'Sign in or create an account to send your report. Your report has been saved on this device. It has not been sent yet.'
+            : 'Sign in or create an account to send your report. It could not be saved on this device, so you may need to fill it in again after signing in. It has not been sent yet.'}
+        </p>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <Link
+            to={authLinkForDraft('login')}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-950 px-5 py-3 text-sm font-bold text-white hover:bg-brand-800"
+          >
+            <LogIn className="h-4 w-4" />
+            Sign in
+          </Link>
+          <Link
+            to={authLinkForDraft('register')}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-border-soft px-5 py-3 text-sm font-bold text-brand-950 hover:bg-canvas"
+          >
+            <UserPlus className="h-4 w-4" />
+            Create an account
+          </Link>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-3 w-full rounded-xl px-5 py-2.5 text-sm font-semibold text-text-secondary hover:bg-canvas"
+        >
+          Keep editing
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ReportHazardPage() {
   const [searchParams] = useSearchParams();
   const [communities, setCommunities] = useState<Community[]>([]);
@@ -95,6 +187,38 @@ export function ReportHazardPage() {
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<OwnReport | null>(null);
+
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const [authPrompt, setAuthPrompt] = useState<{ saved: boolean } | null>(null);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+
+  // A report saved before sign-in is restored once the user is signed in. It is never sent
+  // automatically: the user checks it and presses Submit.
+  useEffect(() => {
+    if (!userId) return;
+    const draft = loadDraft(browserStorage(), new Date());
+    if (!draft) return;
+
+    void Promise.resolve().then(() => {
+      setCommunityId(draft.communityId);
+      setCategory(draft.category);
+      setDescription(draft.description);
+      setLocationDetails(draft.locationDetails);
+      setCoordinates(
+        draft.latitude !== null && draft.longitude !== null
+          ? { latitude: draft.latitude, longitude: draft.longitude }
+          : null,
+      );
+      setRestoredDraft(true);
+    });
+  }, [userId]);
+
+  const closeAuthPrompt = useCallback(() => {
+    setAuthPrompt(null);
+    submitButtonRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -184,6 +308,19 @@ export function ReportHazardPage() {
       return;
     }
 
+    if (!userId) {
+      // Not signed in: keep the report on this device and ask the visitor to sign in.
+      const saved = saveDraft(
+        browserStorage(),
+        buildDraft(
+          { communityId, category, description, locationDetails, coordinates },
+          new Date(),
+        ),
+      );
+      setAuthPrompt({ saved });
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -195,6 +332,8 @@ export function ReportHazardPage() {
         longitude: coordinates?.longitude ?? null,
       });
       setSubmitted(report);
+      clearDraft(browserStorage());
+      setRestoredDraft(false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error: unknown) {
       setSubmitError(
@@ -207,7 +346,22 @@ export function ReportHazardPage() {
     }
   }
 
+  function discardDraft() {
+    clearDraft(browserStorage());
+    setRestoredDraft(false);
+    setCommunityId('');
+    setCategory('');
+    setDescription('');
+    setLocationDetails('');
+    setCoordinates(null);
+    setSubmitError('');
+  }
+
   function resetForm() {
+    if (restoredDraft) {
+      clearDraft(browserStorage());
+      setRestoredDraft(false);
+    }
     setCommunityId('');
     setCategory('');
     setDescription('');
@@ -353,6 +507,25 @@ export function ReportHazardPage() {
             </div>
 
            
+
+            {restoredDraft && (
+              <div
+                role="status"
+                className="mb-6 flex flex-col gap-3 rounded-xl border border-brand-100 bg-brand-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <p className="flex items-start gap-2 text-sm font-semibold text-brand-900">
+                  <Save className="mt-0.5 h-4 w-4 shrink-0" />
+                  Your saved report is ready — check it and press Submit.
+                </p>
+                <button
+                  type="button"
+                  onClick={discardDraft}
+                  className="shrink-0 rounded-lg border border-brand-100 bg-white px-3 py-2 text-xs font-bold text-brand-950 hover:bg-canvas"
+                >
+                  Discard saved report
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
               <section className="rounded-2xl border border-border-soft bg-white p-5 shadow-sm md:p-7">
@@ -637,6 +810,7 @@ export function ReportHazardPage() {
                 </button>
 
                 <button
+                  ref={submitButtonRef}
                   type="submit"
                   disabled={
                     submitting || communitiesLoading || communities.length === 0
@@ -647,8 +821,17 @@ export function ReportHazardPage() {
                   <CheckCircle2 className="h-4 w-4" />
                 </button>
               </div>
+              {!userId && (
+                <p className="text-right text-xs text-text-secondary">
+                  You will be asked to sign in or create an account before your report is sent.
+                </p>
+              )}
             </form>
           </>
+        )}
+
+        {authPrompt && (
+          <SignInToSendDialog saved={authPrompt.saved} onClose={closeAuthPrompt} />
         )}
       </main>
     </ResidentShell>

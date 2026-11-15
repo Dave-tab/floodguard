@@ -42,15 +42,8 @@ export function AppRouter() {
           element={<AuthPage initialMode="register" />}
         />
 
-        {/* Resident reporting */}
-        <Route
-          path="/report-hazard"
-          element={
-            <ProtectedRoute>
-              <ReportHazardPage />
-            </ProtectedRoute>
-          }
-        />
+        {/* Resident reporting: anyone can fill the form; sending it requires sign-in */}
+        <Route path="/report-hazard" element={<ReportHazardPage />} />
 
         {/* Public alerts */}
         <Route path="/alerts" element={<AlertsPage />} />
